@@ -1,0 +1,168 @@
+#!/usr/bin/env python
+
+# s3edge : a command line to access stores that use the s3 protocol 
+#        e.g. AWS S3, NexentaEdge S3, Minio S3 etc 
+
+import platform
+import getopt
+import sys
+import pprint
+import os
+from os.path import expanduser
+
+from edge_access import (edge_config, edge_store_access, edge_obj_access)
+from edge_logger import (edge_logger)
+
+EDGE_CONFIG_FILE=1
+EDGE_CONFIG_JSON=2
+
+default_config = "/.s3edge-config"
+S3EA_LOG="s3edge.log"
+
+
+def config_usage():
+    print("... config")
+    print("... config list")
+    print("... config  show  <store_name>")
+    print("... config  primary <store_name>")
+    print("... config  primary <store_name> set <ACCESS=...> <SECRET=...>")
+
+def config(edge_cfg, command, args):
+    if len(args) > 0:
+        store_name = args[0]
+    else:
+        store_name = edge_cfg.getPrimaryService()
+    if command == "show":
+        pprint.pprint(edge_cfg.get(store_name))
+    elif command in ("-h", "--help"):
+        config_usage()
+    elif command == "primary":
+        print(edge_cfg.getPrimaryService())
+    elif command == "list":
+        all_cfg = edge_cfg.getcfg()
+        for k,v in all_cfg.items():
+            if (k == "PRIMARY") or (k == "DEBUG_LEVEL"):
+                print(k + " : " + str(v))
+            else:
+                print(k)
+    else:
+        print("Unknown command : " + command)
+
+def process_command(command, args, elog):
+    cfg_file = expanduser("~") + default_config 
+    edge_cfg = edge_config(cfg_file, EDGE_CONFIG_FILE)
+    edge_cfg.load_file(cfg_file)
+    primary_service = edge_cfg.getPrimaryService()
+    if (command == "list"):
+        edge_store = edge_store_access(edge_cfg)
+        if not args:
+            edge_store.list_buckets()
+        else:
+            objname = args[0]
+            objp = objname.split("/")
+            bucketName = objp[0]
+            objpath = "/".join(objp[1:])
+            edge_store.list(bucketName, objpath)
+    elif (command == "exists"):
+        edge_obj = edge_obj_access(edge_cfg)
+        f = edge_obj.exists_obj(args[0])
+        print(args[0] + " : " + str(f))
+    elif (command == "info"):
+        edge_obj = edge_obj_access(edge_cfg)
+        f = edge_obj.info_obj(args[0])
+        pprint.pprint(str(f))
+    elif (command == "put"):
+        edge_obj = edge_obj_access(edge_cfg)
+        recurse=False
+        if (args[0] == "-r"):
+            recurse=True
+            edge_obj.put_obj(args[1], recurse, fileName=args[2])
+        else:
+            edge_obj.put_obj(args[0], recurse, fileName=args[1])
+    elif (command == "get"):
+        edge_obj = edge_obj_access(edge_cfg)
+        recurse=False
+        if (args[0] == "-r"):
+            recurse=True
+            edge_obj.get_obj(args[1], recurse, fileName=args[2])
+        else:
+            edge_obj.get_obj(args[0], recurse, fileName=args[1])
+    elif (command == "del"):
+        edge_obj = edge_obj_access(edge_cfg)
+        recurse=False
+        if (args[0] == "-r"):
+            recurse=True
+            edge_obj.remove_obj(args[1], recurse)
+        else:
+            edge_obj.remove_obj(args[0], recurse)
+    elif (command == "test"):
+        edge_obj = edge_obj_access(edge_cfg)
+        edge_obj.test(args[0])
+    elif (command == "config"):
+        if (not args):
+            config(edge_cfg, "show", [])
+        else:
+            config(edge_cfg, args[0], args[1:])
+    else:
+        elog.log_error('CommandError', "Unknown command: " + command)
+
+def system_info(debug_level):
+    print("python : " + platform.python_version() + " " + platform.python_implementation() + " " + str(platform.python_build()))
+    print("platform : " + platform.node() + " " + platform.system() + " " + platform.machine() + " " + platform.release())
+    print("uname : " + platform.uname().version)
+    print("debug_level : " + str(debug_level))
+
+def usage():
+    print(sys.argv[0] + " --help")
+    print(sys.argv[0] + " --system")
+    print(sys.argv[0] + " [ --debug <level> ] <command> <objname> <arg>")
+    print("Commands:")
+    print("\t\tconfig")
+    print("\t\tlist")
+    print("\t\texists")
+    print("\t\tput")
+    print("\t\tget")
+    print("\t\tdel")
+    print("\t\ttest")
+    print("Examples:")
+    print("\t% " + sys.argv[0] + " [ --debug <level> ] list")
+    print("\t% " + sys.argv[0] + " [ --debug <level> ] list <bucketname>")
+    print("\t% " + sys.argv[0] + " get [ -r ] <bucketname/filename> <filename>")
+    print("\t% " + sys.argv[0] + " put [ -r ] <bucketname/filename> <filename>")
+    print("\t% " + sys.argv[0] + " del [ -r ] <bucketname/filename>")
+    print("\t% " + sys.argv[0] + " info <bucketname/filename>")
+    print("\t% " + sys.argv[0] + " exists <bucketname/filename>")
+
+def main():
+    debug_level = 4
+    try:
+        opts, remainder = getopt.getopt(sys.argv[1:], "hd:s", ["help", "debug", "system"])
+    except getopt.GetoptError:
+        usage()
+        sys.exit(2)
+    for o,a in opts:
+        if o in ("-h", "--help"):
+            usage()
+            sys.exit(2)
+        if o in ("-d", "--debug"):
+            debug_level = a
+        if o in ("-s", "--system"):
+            system_info(debug_level)
+            sys.exit(0)
+    if (len(remainder) < 1):
+        usage()
+        sys.exit(2)
+  
+    elog = edge_logger(debug_level, S3EA_LOG) 
+    elog.log_info(sys.argv[0] + " started")
+
+    command = remainder[0]
+    if len(remainder[1:]) >= 1:
+        process_command(command, remainder[1:], elog)
+    else:
+        process_command(command, None, elog)
+
+    elog.log_info(sys.argv[0] + " ended")
+
+if __name__ == '__main__':
+    main()
