@@ -24,8 +24,8 @@ class s3error(object):
 
 class s3list_parser(object):
     def __init__(self, xmlText):
-        content = xmlText.encode('utf8')
-        self.root = etree.fromstring(content)
+        self.content = xmlText.encode('utf8')
+        self.root = etree.fromstring(self.content)
         self.context = etree.iterwalk(self.root, events=("start", "end"))
     #  find an element of one value 
     #  <foo>
@@ -82,7 +82,18 @@ class s3list_parser(object):
                             nmfoundlist.append(child.text)
         return nmfoundlist
 
-
+    def find_element_list_key(self, namepath, pkey):
+        namekeys = namepath.split("/")
+        if (len(namekeys) == 0):
+            return []
+        nmfoundlist = []
+        for elem in self.root:
+            eltags = elem.tag.split("}")
+            if eltags[1] == namekeys[-1]:
+                for child in elem:
+                    if (child.tag.split("}")[1] == pkey):
+                        nmfoundlist.append(child.text)
+        return nmfoundlist
 
 class s3parser(object):
     def __init__(self, root_name, element):

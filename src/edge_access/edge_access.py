@@ -3,28 +3,32 @@
 from __future__ import absolute_import
 import sys
 import io
+import simplejson
 import json
 import os
 import itertools
 import codecs
+
+import hashlib
 
 import requests
 import urllib3
 import urllib.parse as urlparse
 
 # added because some sites do not need ssl certification 
-# and that bgenerates warnings in the code
+# and that generates warnings in the code
+# disable these warnings for now
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 urllib3.disable_warnings(InsecureRequestWarning)    
 
-import hashlib
-
 from time import mktime, strptime
 from datetime import datetime, timedelta
-
 from requests_aws4auth import AWS4Auth
+
 from s3parser import (s3parser, s3error, s3list_parser)
-from edgeerror import (edge_error, InvalidXML, AccessDenied, InvalidURI, Redirect, ServiceError, CommandError, InvalidObject, error_raise)
+from edgeerror import (edge_error, InvalidXML, AccessDenied, InvalidURI, \
+                        Redirect, ServiceError, CommandError, InvalidObject, \
+                        error_raise)
 from sigmisc import Hasher
 
 # create logger
@@ -44,17 +48,14 @@ EDGE_CONFIG_FILE=1
 EDGE_CONFIG_JSON=2
 
 class edge_config:
-    def __init__(self, fileData, configType):
+    def __init__(self):
         self.logger = logging.getLogger(EDGE_ACCESS_LOG_NAME + '.edge_config')
-        if configType == EDGE_CONFIG_FILE:
-            self.load_file(fileData)
-        elif configType == EDGE_CONFIG_JSON:
-            self.fromstring(fileData)
     def load_file(self, fileName):
+        self.configured = False
         try:
             dff = open(fileName)
             self.cfg_data = json.load(dff)
-            self.loaded = True
+            self.configured = True
             self.logger.info(fileName + " loaded")
         except FileNotFoundError:
             self.logger.error("File not found : " + fileName)
@@ -76,6 +77,16 @@ class edge_config:
             self.logger.error("Unexpected Error: ", sys.exc_info()[0])
             raise
         self.logger.info("configuration  loaded")
+    def save_file(self, fileName):
+        try:
+            jsondata = simplejson.dumps(self.cfg_data, indent=4, skipkeys=True, sort_keys=True)
+            fd = open(fileName, 'w')
+            fd.write(jsondata)
+            fd.close()
+        except:
+            #print("ERROR writing " +  fileName + " " + str(sys.exc_info()[0]))
+            self.logger.error("ERROR writing " +  fileName)
+            pass
     def configure(self, service_name, params):
         if self.configured:
             self.cfg_data[service_name]['ACCESS'] = params[0]
@@ -92,11 +103,16 @@ class edge_config:
                         'TESTBUCKET' : params[4] }
     def getcfg(self):
         return self.cfg_data
+    def saveCfg(self, fileName):
+        return self.save_file(fileName)
     def get(self, store_name):
         return self.cfg_data[store_name]
     def getPrimaryService(self):
         self.service_name = self.cfg_data['PRIMARY']
         return self.service_name
+    def setPrimaryService(self, pname, fileName):
+        self.service_name = pname
+        self.saveCfg(fileName)
     def getEndpoint(self):
         return self.cfg_data[self.service_name]['ENDPOINT']
     def getRegion(self):
@@ -106,7 +122,7 @@ class edge_config:
     def getAccessKey(self):
         return self.cfg_data[self.service_name]['ACCESS']
     def getTestBucket(self):
-        return self.cfg_data[self.service_name]['TESTBUCKET']
+        return self.cfg_data[self.service_name]['DEFAULT_BUCKET']
     def current(self):
         return self.cfg_data[self.service_name]
 
@@ -118,7 +134,8 @@ class edge_store_access():
         self.region = edge_cfg.getRegion()
         self.endpoint = edge_cfg.getEndpoint()
         self.logger = logging.getLogger(EDGE_ACCESS_LOG_NAME + '.edge_store_access')
-    def list_buckets(self):
+        self.edge_cfg = edge_cfg
+    def list_buckets(self, recursive):
         auth = AWS4Auth(self.access, self.secret, self.region, 's3')
         try:
             response = requests.get(self.endpoint, auth=auth, verify=False)
@@ -141,42 +158,20 @@ class edge_store_access():
             print(str(e))
             self.logger.error(str(e))
             return
-    def list(self, bucketName, objname):
-        auth = AWS4Auth(self.access, self.secret, self.region, 's3')
-        if objname:
-            url = self.endpoint + "/" + bucketName + "/" + objname
+    def list(self, bucketName, objname, recursive=False):
+        edge_obj = edge_obj_access(self.edge_cfg)
+        if not recursive:
+            objs = edge_obj.list_obj(bucketName + "/" + objname)
+            for item in objs:
+                print(item)
         else:
-            url = self.endpoint + "/" + bucketName + "/"
-        try:
-            response =  requests.get(url, auth=auth, verify=False)
-            if response.status_code == 200:
-                self.logger.debug("GET " + url + " " + str(response.status_code))
-                #TODO
-                #if (response.text.startwith("<!doctype html>")):
-                #    raise
-                if response.headers['Content-Type'] == 'application/xml':
-                    eroot = s3list_parser(response.text)
-                    top_name = eroot.find_element_one('ListBucketsResult/Name')
-                    contents = eroot.find_element_list('ListBucketsResult/Contents', 'Key')
-                    print(top_name)
-                    for content in contents:
-                        print("\t" + content)
+            objs = edge_obj.list_obj(bucketName + "/" + objname)
+            for item in objs:
+                if item.endswith("/"):
+                    print("\t" + item)
+                    self.list(bucketName, item, recursive)
                 else:
-                    print(objname + "\t\t" + response.headers['Content-Length'] + "\t\t" + response.headers['Last-Modified'])
-            else:
-                self.logger.error("GET " + url + " " + str(response.status_code))
-                s3err = s3error(response) 
-                self.logger.error(s3err.error_text())
-        except requests.exceptions.RequestException as e:
-            print(str(e))
-            self.logger.error(str(e))
-        except Exception as e:
-            print(str(e))
-            self.logger.error(str(e))
-    def make_bucket(self, bucketName):
-        print("TBD: make bucket")
-    def remove_bucket(self, bucketName):
-        print("TBD: remove bucket")
+                    print("\t\t"+ item)
 
 class edge_obj_access():
     def __init__(self, edge_cfg):
@@ -208,26 +203,38 @@ class edge_obj_access():
         print("REGION: " + self.region)
         print("ENDPOINT: " + self.endpoint)
         print("TESTBUCKET: " + self.testbucket)
-    def test(self,objname):
+
+    def test_one_obj(self, objname):
+        if not objname:
+            objfile = "ofile1"
+            if os.path.exists(objfile):
+                os.remove(objfile)
+            with open(objfile, 'wb') as fout:
+                fout.write(os.urandom(1024))
+        else:
+            objfile = objname
         try:
-            fl = open("foo.xml")
+            fl = open(objfile)
         except FileNotFoundError:
-            self.logger.error("Need a foo.xml to upload")
+            self.logger.error("Need a file to upload")
             return
-        objname = self.testbucket + "/foo.xml"
+        objname = self.testbucket + "/" + objfile
         f = self.exists_obj(objname)
         self.logger.info("Exists?: " + objname + " : " + str(f))
         if f:
             ff = self.remove_obj(objname)
             self.logger.info("Remove?: " + objname + " : " + str(ff))
-        pf = self.put_obj(objname, fileName="foo.xml")
+        pf = self.put_obj(objname, fileName=objfile)
         self.logger.info("Put?: " + objname + " : " + str(pf))
         if pf:
             f = self.exists_obj(objname)
             self.logger.info("Exists?: " + objname + " : " + str(f))
         else:
             return
-        f = self.get_obj(objname, fileName="food.xml")
+        localFile = objfile + "--"
+        if os.path.exists(localFile):
+            os.remove(localFile)
+        f = self.get_obj(objname, fileName=localFile)
         self.logger.info("Get?: " + objname + " : " + str(f))
         if f:
             ff = self.remove_obj(objname)
@@ -389,4 +396,82 @@ class edge_obj_access():
         except Exception as e:
             self.logger.error(str(e))
         return None
+    def list_obj(self, dname, header_options=None):
+        objp = dname.split("/")
+        bucketName = objp[0]
+        objpath = "/".join(objp[1:])
+        if not self.check_bucket(bucketName) or not self.check_objpath(objpath):
+            self.logger.error('InvalidObject', objname)
+            return
+        auth = AWS4Auth(self.access, self.secret, self.region, 's3')
+        url = self.endpoint + "/" + bucketName + "/" + "?list-type=2&prefix=" + objpath + "&delimiter=/"
+        final_list = []
+        try:
+            response =  requests.get(url, auth=auth, verify=False)
+            if response.status_code == 200:
+                if response.ok:
+                    if response.headers['Content-Type'] == 'application/xml':
+                        eroot = s3list_parser(response.text)
+                        top_name = eroot.find_element_one('ListBucketsResult/Name')
+                        contents = eroot.find_element_list('ListBucketsResult/Contents', 'Key')
+                        subdir = eroot.find_element_list_key('ListBucketsResult/CommonPrefixes','Prefix')
+                        for content in contents:
+                            final_list.append(content)
+                        for mdir in subdir:
+                            final_list.append(mdir)
+                        return final_list
+                    else:
+                        print(objname + "\t\t" + response.headers['Content-Length'] + "\t\t" + response.headers['Last-Modified'])
+                else:
+                    print("HEAD " + url + " " + str(response.status_code))
+            else:
+                print("Error: " + str(response.status_code))
+        except requests.exceptions.RequestException as e:
+            self.logger.error(str(e))
+        except Exception as e:
+            self.logger.error(str(e))
+    def put_obj_recursive(self, objname, dname, header_options=None):
+        print("objname: " + objname + " dname: " + dname)
+        for path, dirnames, filenames in os.walk(dname):
+            for fname in filenames:
+                fln=os.path.join(path, fname)
+                oname = objname + "/" + fln
+                print("remote object: " + oname + " file: " + fln)
+                self.put_obj(oname, fileName=fln)
+    def get_obj_recursive(self, tdname, dname, header_options=None):
+        ls = self.list_obj(tdname)
+        objp = tdname.split("/")
+        bucketName = objp[0]
+        dirName = objp[1:]
+        ls = self.list_obj(tdname)
+        for item in ls:
+            remoteObj = bucketName + "/" + item
+            self.logger.debug(item)
+            if item.endswith("/"):
+                localDir = dname + "/" + item
+                try:
+                    os.stat(localDir)
+                except:
+                    if not os.path.exists(localDir):
+                        os.makedirs(localDir)
+                self.get_obj_recursive(bucketName + "/" + item, dname)
+            else:
+                localFile = dname + "/" + item
+                self.get_obj(remoteObj, localFile)
+    def remove_obj_recursive(self, dname, header_options=None):
+        objp = dname.split("/")
+        bucketName = objp[0]
+        dirName = objp[1:]
+        ls = self.list_obj(dname)
+        for item in ls:
+            self.logger.debug(item)
+            if item.endswith("/"):
+                if (len(ls) > 0):
+                    self.remove_obj_recursive(bucketName + "/" + item)
+                    self.remove_obj(bucketName + "/" + item)
+                else:
+                    self.remove_obj(bucketName + "/" + item)
+
+            else:
+                self.remove_obj(bucketName + "/" + item)
 

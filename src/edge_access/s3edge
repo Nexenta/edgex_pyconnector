@@ -25,7 +25,7 @@ def config_usage():
     print("... config list")
     print("... config  show  <store_name>")
     print("... config  primary <store_name>")
-    print("... config  primary <store_name> set <ACCESS=...> <SECRET=...>")
+    #print("... config  primary <store_name> set <ACCESS=...> <SECRET=...>")
 
 def config(edge_cfg, command, args):
     if len(args) > 0:
@@ -37,7 +37,10 @@ def config(edge_cfg, command, args):
     elif command in ("-h", "--help"):
         config_usage()
     elif command == "primary":
-        print(edge_cfg.getPrimaryService())
+        if len(args) > 0:
+            edge_cfg.setPrimaryService(args[0], default_config)
+        else:
+            print(edge_cfg.getPrimaryService())
     elif command == "list":
         all_cfg = edge_cfg.getcfg()
         for k,v in all_cfg.items():
@@ -50,19 +53,34 @@ def config(edge_cfg, command, args):
 
 def process_command(command, args, elog):
     cfg_file = expanduser("~") + default_config 
-    edge_cfg = edge_config(cfg_file, EDGE_CONFIG_FILE)
-    edge_cfg.load_file(cfg_file)
+    edge_cfg = edge_config()
+    try:
+        edge_cfg.load_file(cfg_file)
+    except:
+        elog.log_error(" Error loading " + cfg_file  + " config file")
+        return
     primary_service = edge_cfg.getPrimaryService()
     if (command == "list"):
         edge_store = edge_store_access(edge_cfg)
         if not args:
-            edge_store.list_buckets()
+            recursive = False
+            edge_store.list_buckets(recursive)
+            return
+
+        if (args[0] == "-r"):
+            recursive = True
         else:
-            objname = args[0]
+            recursive = False
+        if args:
+            if recursive:
+                objname = args[1]
+            else:
+                objname = args[0]
             objp = objname.split("/")
             bucketName = objp[0]
             objpath = "/".join(objp[1:])
-            edge_store.list(bucketName, objpath)
+            print(bucketName)
+            edge_store.list(bucketName, objpath, recursive)
     elif (command == "exists"):
         edge_obj = edge_obj_access(edge_cfg)
         f = edge_obj.exists_obj(args[0])
@@ -73,31 +91,28 @@ def process_command(command, args, elog):
         pprint.pprint(str(f))
     elif (command == "put"):
         edge_obj = edge_obj_access(edge_cfg)
-        recurse=False
         if (args[0] == "-r"):
-            recurse=True
-            edge_obj.put_obj(args[1], recurse, fileName=args[2])
+            edge_obj.put_obj_recursive(args[1], dname=args[2])
         else:
-            edge_obj.put_obj(args[0], recurse, fileName=args[1])
+            edge_obj.put_obj(args[0], fileName=args[1])
     elif (command == "get"):
         edge_obj = edge_obj_access(edge_cfg)
-        recurse=False
         if (args[0] == "-r"):
-            recurse=True
-            edge_obj.get_obj(args[1], recurse, fileName=args[2])
+            edge_obj.get_obj_recursive(args[1], dname=args[2])
         else:
             edge_obj.get_obj(args[0], recurse, fileName=args[1])
     elif (command == "del"):
         edge_obj = edge_obj_access(edge_cfg)
-        recurse=False
         if (args[0] == "-r"):
-            recurse=True
-            edge_obj.remove_obj(args[1], recurse)
+            edge_obj.remove_obj_recursive(args[1])
         else:
             edge_obj.remove_obj(args[0], recurse)
     elif (command == "test"):
         edge_obj = edge_obj_access(edge_cfg)
-        edge_obj.test(args[0])
+        if args:
+            edge_obj.test_one_obj(args[0])
+        else:
+            edge_obj.test_one_obj("")
     elif (command == "config"):
         if (not args):
             config(edge_cfg, "show", [])
@@ -107,10 +122,10 @@ def process_command(command, args, elog):
         elog.log_error('CommandError', "Unknown command: " + command)
 
 def system_info(debug_level):
-    print("python : " + platform.python_version() + " " + platform.python_implementation() + " " + str(platform.python_build()))
-    print("platform : " + platform.node() + " " + platform.system() + " " + platform.machine() + " " + platform.release())
-    print("uname : " + platform.uname().version)
-    print("debug_level : " + str(debug_level))
+    print("python \t\t: " + platform.python_version() + " " + platform.python_implementation() + " " + str(platform.python_build()))
+    print("platform \t: " + platform.node() + " " + platform.system() + " " + platform.machine() + " " + platform.release())
+    print("uname \t\t: " + platform.uname().version)
+    print("debug_level \t: " + str(debug_level))
 
 def usage():
     print(sys.argv[0] + " --help")
@@ -125,11 +140,14 @@ def usage():
     print("\t\tdel")
     print("\t\ttest")
     print("Examples:")
-    print("\t% " + sys.argv[0] + " [ --debug <level> ] list")
-    print("\t% " + sys.argv[0] + " [ --debug <level> ] list <bucketname>")
-    print("\t% " + sys.argv[0] + " get [ -r ] <bucketname/filename> <filename>")
-    print("\t% " + sys.argv[0] + " put [ -r ] <bucketname/filename> <filename>")
-    print("\t% " + sys.argv[0] + " del [ -r ] <bucketname/filename>")
+    print("\t% " + sys.argv[0] + " [ --debug <level> ] list [ -r ]")
+    print("\t% " + sys.argv[0] + " [ --debug <level> ] list [ -r ] <bucketname>")
+    print("\t% " + sys.argv[0] + " get <bucketname/filename> <filename>")
+    print("\t% " + sys.argv[0] + " get [ -r ] <bucketname/dirname> <dirname>")
+    print("\t% " + sys.argv[0] + " put <bucketname/filename> <filename>")
+    print("\t% " + sys.argv[0] + " put [ -r ] <bucketname/dirname> <dirname>")
+    print("\t% " + sys.argv[0] + " del <bucketname/filename>")
+    print("\t% " + sys.argv[0] + " del [ -r ] <bucketname/dirname>")
     print("\t% " + sys.argv[0] + " info <bucketname/filename>")
     print("\t% " + sys.argv[0] + " exists <bucketname/filename>")
 
