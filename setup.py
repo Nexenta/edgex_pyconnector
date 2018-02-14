@@ -17,10 +17,10 @@ HERE = os.path.abspath(os.path.dirname(__file__))
 
 ###################################################################
 
-NAME = "edge_access"
+NAME = "edgex_access"
 PACKAGES = find_packages(where="src")
-META_PATH = os.path.join("src", "edge_access", "__init__.py")
-KEYWORDS = ["class", "requests", "edge_access"]
+META_PATH = os.path.join("src", "edgex_access", "__init__.py")
+KEYWORDS = ["class", "requests", "edgex_access"]
 CLASSIFIERS = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
@@ -34,7 +34,7 @@ CLASSIFIERS = [
     "Programming Language :: Python :: Implementation :: PyPy",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-INSTALL_REQUIRES = [ 'urllib3', 'requests_aws4auth', 'requests' ]
+INSTALL_REQUIRES = [ 'urllib3', 'requests_aws4auth', 'requests' , 'simplejson']
 
 ###################################################################
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# s3edge : a command line to access stores that use the s3 protocol 
+# s3edgex : a command line to access stores that use the s3 protocol 
 #        e.g. AWS S3, NexentaEdge S3, Minio S3 etc 
 
 import platform
@@ -10,39 +10,35 @@ import pprint
 import os
 from os.path import expanduser
 
-from edge_access import (edge_config, edge_store_access, edge_obj_access)
-from edge_logger import (edge_logger)
+import edgex_access
 
-EDGE_CONFIG_FILE=1
-EDGE_CONFIG_JSON=2
-
-default_config = "/.s3edge-config"
-S3EA_LOG="s3edge.log"
+DEFAULT_CONFIG = "/.s3edgex-config"
+S3EA_LOG="s3edgex.log"
 
 
 def config_usage():
-    print("... config")
-    print("... config list")
-    print("... config  show  <store_name>")
-    print("... config  primary <store_name>")
-    #print("... config  primary <store_name> set <ACCESS=...> <SECRET=...>")
+    print("s3edgex config")
+    print("s3edgex config list")
+    print("s3edgex config  show  <store_name>")
+    print("s3edgex config  primary <store_name>")
+    #print("s3edgex config  primary <store_name> set <ACCESS=...> <SECRET=...>")
 
-def config(edge_cfg, command, args):
+def config(edgex_cfg, command, args):
     if len(args) > 0:
         store_name = args[0]
     else:
-        store_name = edge_cfg.getPrimaryService()
+        store_name = edgex_cfg.getPrimaryService()
     if command == "show":
-        pprint.pprint(edge_cfg.get(store_name))
+        pprint.pprint(edgex_cfg.get(store_name))
     elif command in ("-h", "--help"):
         config_usage()
     elif command == "primary":
         if len(args) > 0:
-            edge_cfg.setPrimaryService(args[0], default_config)
+            edgex_cfg.setPrimaryService(args[0], default_config)
         else:
-            print(edge_cfg.getPrimaryService())
+            print(edgex_cfg.getPrimaryService())
     elif command == "list":
-        all_cfg = edge_cfg.getcfg()
+        all_cfg = edgex_cfg.getcfg()
         for k,v in all_cfg.items():
             if (k == "PRIMARY") or (k == "DEBUG_LEVEL"):
                 print(k + " : " + str(v))
@@ -52,21 +48,20 @@ def config(edge_cfg, command, args):
         print("Unknown command : " + command)
 
 def process_command(command, args, elog):
-    cfg_file = expanduser("~") + default_config 
-    edge_cfg = edge_config()
+    cfg_file = expanduser("~") + DEFAULT_CONFIG 
+    edgex_cfg = edgex_access.edgex_config()
     try:
-        edge_cfg.load_file(cfg_file)
+        edgex_cfg.load_file(cfg_file)
     except:
         elog.log_error(" Error loading " + cfg_file  + " config file")
         return
-    primary_service = edge_cfg.getPrimaryService()
+    primary_service = edgex_cfg.getPrimaryService()
     if (command == "list"):
-        edge_store = edge_store_access(edge_cfg)
+        edgex_store = edgex_access.edgex_store_access(edgex_cfg)
         if not args:
             recursive = False
-            edge_store.list_buckets(recursive)
+            edgex_store.list_buckets(recursive)
             return
-
         if (args[0] == "-r"):
             recursive = True
         else:
@@ -80,44 +75,44 @@ def process_command(command, args, elog):
             bucketName = objp[0]
             objpath = "/".join(objp[1:])
             print(bucketName)
-            edge_store.list(bucketName, objpath, recursive)
+            edgex_store.list(bucketName, objpath, recursive)
     elif (command == "exists"):
-        edge_obj = edge_obj_access(edge_cfg)
-        f = edge_obj.exists_obj(args[0])
+        edgex_obj = edgex_access.edgex_obj_access(edgex_cfg)
+        f = edgex_obj.exists_obj(args[0])
         print(args[0] + " : " + str(f))
     elif (command == "info"):
-        edge_obj = edge_obj_access(edge_cfg)
-        f = edge_obj.info_obj(args[0])
+        edgex_obj = edgex_access.edgex_obj_access(edgex_cfg)
+        f = edgex_obj.info_obj(args[0])
         pprint.pprint(str(f))
     elif (command == "put"):
-        edge_obj = edge_obj_access(edge_cfg)
+        edgex_obj = edgex_access.edgex_obj_access(edgex_cfg)
         if (args[0] == "-r"):
-            edge_obj.put_obj_recursive(args[1], dname=args[2])
+            edgex_obj.put_obj_recursive(args[1], dname=args[2])
         else:
-            edge_obj.put_obj(args[0], fileName=args[1])
+            edgex_obj.put_obj(args[0], fileName=args[1])
     elif (command == "get"):
-        edge_obj = edge_obj_access(edge_cfg)
+        edgex_obj = edgex_access.edgex_obj_access(edgex_cfg)
         if (args[0] == "-r"):
-            edge_obj.get_obj_recursive(args[1], dname=args[2])
+            edgex_obj.get_obj_recursive(args[1], dname=args[2])
         else:
-            edge_obj.get_obj(args[0], recurse, fileName=args[1])
+            edgex_obj.get_obj(args[0], recurse, fileName=args[1])
     elif (command == "del"):
-        edge_obj = edge_obj_access(edge_cfg)
+        edgex_obj = edgex_access.edgex_obj_access(edgex_cfg)
         if (args[0] == "-r"):
-            edge_obj.remove_obj_recursive(args[1])
+            edgex_obj.remove_obj_recursive(args[1])
         else:
-            edge_obj.remove_obj(args[0], recurse)
+            edgex_obj.remove_obj(args[0], recurse)
     elif (command == "test"):
-        edge_obj = edge_obj_access(edge_cfg)
+        edgex_obj = edgex_access.edgex_obj_access(edgex_cfg)
         if args:
-            edge_obj.test_one_obj(args[0])
+            edgex_obj.test_one_obj(args[0])
         else:
-            edge_obj.test_one_obj("")
+            edgex_obj.test_one_obj("")
     elif (command == "config"):
         if (not args):
-            config(edge_cfg, "show", [])
+            config(edgex_cfg, "show", [])
         else:
-            config(edge_cfg, args[0], args[1:])
+            config(edgex_cfg, args[0], args[1:])
     else:
         elog.log_error('CommandError', "Unknown command: " + command)
 
@@ -170,8 +165,8 @@ def main():
     if (len(remainder) < 1):
         usage()
         sys.exit(2)
-  
-    elog = edge_logger(debug_level, S3EA_LOG) 
+ 
+    elog = edgex_access.edgex_logger(debug_level, S3EA_LOG) 
     elog.log_info(sys.argv[0] + " started")
 
     command = remainder[0]

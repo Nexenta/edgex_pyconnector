@@ -1,1 +1,0 @@
-edge_access : a Python API access to the S3 edge access 
