@@ -156,7 +156,7 @@ def error_raise(ecode, emsg):
 ETREE_EXCEPTIONS = (SyntaxError, AttributeError, ValueError, TypeError)
 S3_NS = {'s3' : 'http://s3.amazonaws.com/doc/2006-03-01/'}
 
-class s3error(object):
+class edgex_s3error(object):
     def __init__(self, response):
         self.error_content = response.text.encode('utf8')
         self.status_code = response.status_code
@@ -171,7 +171,7 @@ class s3error(object):
         output += 'Status : {}\n'.format(self.status())
         return output
 
-class s3list_parser(object):
+class edgex_s3list_parser(object):
     def __init__(self, xmlText):
         self.content = xmlText.encode('utf8')
         self.root = etree.fromstring(self.content)
@@ -244,7 +244,7 @@ class s3list_parser(object):
                         nmfoundlist.append(child.text)
         return nmfoundlist
 
-class s3parser(object):
+class edgex_s3parser(object):
     def __init__(self, root_name, element):
         self.root_name = root_name
         self.element = element
@@ -264,12 +264,12 @@ class s3parser(object):
             error_print(InvalidXML, 'XML is not parsable')
     def findall(self, name):
         return [
-            s3parser(self.root_name, elem)
+            edgex_s3parser(self.root_name, elem)
             for elem in self.element.findall('s3:{}'.format(name), S3_NS)
         ]
     def find(self, name):
         elt = self.element.find('s3:{}'.format(name), S3_NS)
-        return s3parser(self.root_name, elt) if elt is not None else None
+        return edgex_s3parser(self.root_name, elt) if elt is not None else None
     def get_child_text(self, name, strict=True):
         if strict:
             try:
@@ -378,7 +378,7 @@ class edgex_store_access():
                 if (response.text.startswith("<!doctype html>") == True):
                     self.logger.error("Illegal HTML response on a GET: ") 
                     raise
-                eroot = s3list_parser(response.text)
+                eroot = edgex_s3list_parser(response.text)
                 top_name = eroot.find_element_one('ListAllMyBucketsResult/Owner/DisplayName')
                 blist = eroot.find_element_list('ListAllMyBucketsResult/Buckets/Bucket', 'Name')
                 print(top_name)
@@ -386,7 +386,7 @@ class edgex_store_access():
                     print("\t" + bucket)
             else:
                 self.logger.error("GET " + self.endpoint + " " + str(response.status_code))
-                s3err = s3error(response) 
+                s3err = edgex_s3error(response) 
                 self.logger.error(s3err.error_text())
         except requests.exceptions.RequestException as e:
             print(str(e))
@@ -493,7 +493,7 @@ class edgex_obj_access():
                     return False
             else:
                 self.logger.error("HEAD " + url + " " + str(response.status_code))
-                #s3err = s3error(response) 
+                #s3err = edgex_s3error(response) 
                 #self.logger.error(s3err.error_text())
                 return False
         except requests.exceptions.RequestException as e:
@@ -522,7 +522,7 @@ class edgex_obj_access():
                     self.logger.error("File: " + fileName)
                     return False
             else:
-                s3err = s3error(response) 
+                s3err = edgex_s3error(response) 
                 self.logger.error(s3err.error_text())
                 return False
         except requests.exceptions.RequestException as e:
@@ -563,7 +563,7 @@ class edgex_obj_access():
                     self.logger.error("PUT " + url + " " + str(response.status_code))
                     return False
             else:
-                s3err = s3error(response) 
+                s3err = edgex_s3error(response) 
                 self.logger.error(s3err.error_text())
                 return False
         except requests.exceptions.RequestException as e:
@@ -593,7 +593,7 @@ class edgex_obj_access():
                     return False
             else:
                 self.logger.error("DELETE " + url + " " + str(response.status_code))
-                s3err = s3error(response) 
+                s3err = edgex_s3error(response) 
                 if s3err.error_code() == 'NoSuchKey':
                     return True
                 else:
@@ -645,7 +645,7 @@ class edgex_obj_access():
             if response.status_code == 200:
                 if response.ok:
                     if response.headers['Content-Type'] == 'application/xml':
-                        eroot = s3list_parser(response.text)
+                        eroot = edgex_s3list_parser(response.text)
                         top_name = eroot.find_element_one('ListBucketsResult/Name')
                         contents = eroot.find_element_list('ListBucketsResult/Contents', 'Key')
                         subdir = eroot.find_element_list_key('ListBucketsResult/CommonPrefixes','Prefix')

@@ -6,11 +6,12 @@ init:
 build_tools:
 	python -m pip install setuptools wheel twine
 build:
-	pip freeze > requirements.txt
+	#wpip freeze > requirements.txt
 	python setup.py sdist bdist_wheel
 
 install:
-	pip install $(PKG_NAME)
+	#pip install $(PKG_NAME)
+	pip install .
 uninstall:
 	pip uninstall -y $(PKG_NAME)
 
