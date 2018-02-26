@@ -7,85 +7,60 @@ See:
 
 """
 
-import codecs
-import os
-import re
+import sys
+
+try:
+    py_major = sys.version_info.major
+except AttributeError:
+    py_major = sys.version_info[0]
+
+if py_major < 3:
+    sys.stdout.write("Need Python3 or above. Detected: %s\n" % sys.version.split(None,1)[0])
+    sys.exit(-1)
+else:
+    sys.stdout.write("Python version: %s" % sys.version.split(None,1)[0])
 
 from setuptools import setup, find_packages
+from codecs import open
+from os import path
+import re
 
-HERE = os.path.abspath(os.path.dirname(__file__))
-
-###################################################################
-
-NAME = "edgex_access"
-PACKAGES = find_packages(where="src")
-META_PATH = os.path.join("src", "edgex_access", "__init__.py")
-KEYWORDS = ["class", "requests", "edgex_access"]
-CLASSIFIERS = [
-    "Development Status :: 5 - Production/Stable",
-    "Intended Audience :: Developers",
-    "Natural Language :: English",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-    "Programming Language :: Python",
-    "Programming Language :: Python :: 3.5",
-    "Programming Language :: Python :: 3.6",
-    "Programming Language :: Python :: Implementation :: CPython",
-    "Programming Language :: Python :: Implementation :: PyPy",
-    "Topic :: Software Development :: Libraries :: Python Modules",
-]
-INSTALL_REQUIRES = [ 'urllib3', 'requests_aws4auth', 'requests' , 'simplejson']
+HERE = path.abspath(path.dirname(__file__))
 
 ###################################################################
 
-# next two methods taken directly from https://hynek.me/articles/sharing-your-labor-of-love-pypi-quick-and-dirty/ 
+with open(path.join(HERE, 'README.rst'), encoding='utf-8') as f:
+    long_description = f.read()
 
-def read(*parts):
-    """
-    Build an absolute path from *parts* and and return the contents of the
-    resulting file.  Assume UTF-8 encoding.
-    """
-    with codecs.open(os.path.join(HERE, *parts), "rb", "utf-8") as f:
-        return f.read()
-
-
-META_FILE = read(META_PATH)
-
-def find_meta(meta):
-    """
-    Extract __*meta*__ from META_FILE.
-    """
-    meta_match = re.search(
-        r"^__{meta}__ = ['\"]([^'\"]*)['\"]".format(meta=meta),
-        META_FILE, re.M
-    )
-    if meta_match:
-        return meta_match.group(1)
-    raise RuntimeError("Unable to find __{meta}__ string.".format(meta=meta))
-
-VERSION = find_meta("version")
-URI = find_meta("uri")
-LONG_DESC = (
-    read("README.rst")
-)
-
-if __name__ == "__main__":
-    setup(
-        name=NAME,
-        description=find_meta("description"),
-        license=find_meta("license"),
-        url=URI,
-        version=VERSION,
-        author=find_meta("author"),
-        author_email=find_meta("email"),
-        maintainer=find_meta("author"),
-        maintainer_email=find_meta("email"),
-        keywords=KEYWORDS,
-        long_description=LONG_DESC,
-        packages=PACKAGES,
-        package_dir={"": "src"},
-        zip_safe=False,
-        classifiers=CLASSIFIERS,
-        install_requires=INSTALL_REQUIRES,
+setup(
+    name='edgex_access',
+    version='0.0.3',
+    description = "S3 protocol Data access to NexentaEdge or AWS S3",
+    long_description=long_description,
+    url = "http://www.github.com/Nexenta/edgex_pyconnector",
+    author = "Nexenta Systems",
+    author_email = "support@nexenta.com",
+    license = "MIT",
+    copyright = "Copyright (c) 2018 Nexenta Systems",
+    classifiers = [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Natural Language :: English",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3.5",
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+    ],
+    scripts=['s3edgex/s3edgex'],
+    keywords='requests edgex_access edgex_obj',
+    packages=find_packages(where='src'),
+    package_dir={"": "src"},
+    zip_safe=False,
+    python_requires = '>=3',
+    install_requires = [ 'urllib3', 'requests_aws4auth', 'requests' , 'simplejson']
     )
 
