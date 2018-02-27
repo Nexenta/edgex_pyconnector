@@ -1,5 +1,101 @@
 # edgex_pyconnector
 
+## What is edgex_access
+
+Edge-X Python connector library for NexentaEdge and AWS using the S3 protocol 
+
+- S3 configuration  for more than one S3 store
+- signature computation based on configuration
+- S3 URI access for GET,PUT, DELETE
+
+### edgex_config
+
+Read in the configuration for accessing various S3 stores and 
+other local data stores
+
+
+```python
+
+from os.path import expanduser
+import edgex_access
+
+cfg_file = expanduser("~") + /.mys3config
+edgex_cfg = edgex_access.edgex_config()
+
+```
+
+### edgex_store
+
+Each S3 store is represented as a edgex_store, so once the confuration is read,
+all the store instances are available
+
+The configuration as a store marked as a primary S3 store. 
+
+Example:
+```python
+
+primary_store = edgex_cfg.getPrimaryStore()
+primary_store.show()
+buckets = primary_store.list_buckets()
+
+```
+
+### edgex_obj
+
+Each data object in any store is represented as a edgex_obj. At the time of 
+the object creation , only the name is used. Most of the methods of this objects
+are more I/O oriented. 
+
+Here is a small example to whet your appetite
+
+```python
+
+# Check of the object exists in the store
+oname = "mybuk1/high_tech_stocks.txt"
+primary_store = edgex_cfg.getPrimaryStore()
+remote_edgex_obj = edgex_access.edgex_obj(primary_store, oname)
+is_there = remote_edgex_obj.exists()
+
+# is_there is True or False
+
+# Let's get the object
+stock_file_buffer = remote_edgex_obj.get()
+stock_file_name = "high_tech_stocks.txt"
+
+# find my local home directory 
+home_store = edgex_cfg.getHome()
+
+# create a local object representation in my home directory 
+local_edgex_obj = edgex_access.edgex_obj(home_store, stock_file_name)
+
+# now put the remote buffer we got into the local object and write it out
+local_edgex_obj.put(stock_file_buffer)
+
+# Let's remove the remote file
+remote_edgex_obj.remove()
+
+```
+
+edgex_access is in development. SOme of the features are missing and there are bugs 
+Please refer to the 'Development Status" below.
+
+### Prerequisites & Requirements
+
+
+You need Python 3.5 or later to use edgex_access.  You can have multiple Python
+versions (2.x and 3.x) installed on the same system without problems.
+
+In Ubuntu, you can install Python 3 like this:
+
+    $ sudo apt-get install python3 python3-pip
+
+Make sure you have Python3 installed. Please check the requirement.txt for a list of Python packages 
+that should be pre-installed before edgex_access and s3edgex can be used. 
+
+### Coding Style
+
+The Hitchhiker's Guide to Python [ http://docs.python-guide.org/en/latest/writing/style/ ]
+
 
 ## s3edgex
 
@@ -7,11 +103,6 @@ A simple CLI that uses the edgex_access module for command line access to the S3
 
 - Command line access to s3 web services using edgex access
 - edgex_access is the Python class used by s3edgex
-
-### Prerequisites
-
-Make sure you have Python3 installed. Please check the requirement.txt for a list of Python packages 
-that should be pre-installed before edgex_access and s3edgex can be used. 
 
 
 ## Installing and Getting Started
@@ -60,55 +151,6 @@ Cleanup the files now
 s3edgex del /mybucket/file.txt
 rm file.txt foo.txt
 ```
-
-## edgex_access
-
-Edge-X Pyhton connector library for NexentaEdge and AWS using the S3 protocol 
-- S3 configuration  for more than one S3 store
-- signature computation based on configuration
-- S3 URI access for GET,PUT, DELETE
-
-### edgex_config
-
-Example:
-```
-Give an example
-```
-
-### edgex_store
-
-Example:
-```
-Give an example
-```
-
-### edgex_obj
-
-Example:
-```
-Give an example
-```
-
-### Example use of all three objects
-
-Explain what these tests test and why
-
-
-### Coding Style
-
-Explain what these tests test and why
-
-```
-Give an example
-```
-
-## Deployment
-
-Simple ....
-```
-pip install edgex_access
-```
-
 
 ## Built With
 

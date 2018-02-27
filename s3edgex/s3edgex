@@ -19,6 +19,13 @@ S3EA_LOG="s3edgex.log"
 def s3edgex_test(edgex_cfg, testName=""):
     print("Not Yet!!")
 
+def s3edgex_stores(edgex_cfg, args):
+    print("Not Yet!!")
+    pass
+
+def s3edgex_setup():
+    print("Not Yet!!")
+    pass
 
 def list_recursive(dest_obj):
     if dest_obj.isfolder:
@@ -77,7 +84,7 @@ def remove_recursive(dest_obj):
 
 def process_command(command, args, elog):
     cfg_file = expanduser("~") + DEFAULT_CONFIG 
-    edgex_cfg = edgex_access.edgex_config()
+    eDEFAULT_CONFIG dgex_cfg = edgex_access.edgex_config()
     try:
         edgex_cfg.load_file(cfg_file)
     except:
@@ -110,8 +117,10 @@ def process_command(command, args, elog):
                 print(objname)
                 for it in items:
                     print("\t" + it)
-    elif (command == "lsstores"):
-        edgex_cfg.show_stores()
+    elif (command == "setup"):
+        s3edgex_setup()
+    elif (command == "store"):
+        s3edgex_store(edgex_cfg, args)
     elif (command == "lsb"):
         edgex_store = primary_store
         name, items = edgex_store.list_buckets()
@@ -181,7 +190,8 @@ def usage():
     print(sys.argv[0] + " --system")
     print(sys.argv[0] + " [ --debug <level> ] <command> <objname> <arg>")
     print("Commands:")
-    print("\t\tconfig")
+    print("\t\tsetup")
+    print("\t\tstore")
     print("\t\tlist")
     print("\t\texists")
     print("\t\tput")

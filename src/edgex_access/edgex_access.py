@@ -710,8 +710,8 @@ class edgex_obj:
     
     def read(self):
         return self.get()
-    def write(self):
-        return self.put()
+    def write(self, buffer):
+        return self.put(buffer)
 
     def metainfo(self):
         if (self.store.type == "FS"):

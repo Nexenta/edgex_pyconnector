@@ -65,21 +65,18 @@ edgex_config
   load_file(fileName)
   fromstring(string_config)
 
-edgex_store_access(edgex_config)
+edgex_store(edgex_config)
   list_buckets(recursive)
-  list(bucket, object_name, recursive)
 
-edgex_obj_access(edgex_config)
-  test_one_obj
-  put_obj(remoteName, fileName)
-  get_obj(remoteName, fileName)
-  exists_obj(remoteName)
-  remove_obj(remoteName)
-  info_obj(remoteName)
-  list_obj(remotename)
-  put_obj_recursive(remoteDir)
-  get_obj_recursive(remoteDir)
-  remove_obj_recursive(remoteDir)
+edgex_obj(edgex_config, name)
+  put(fileBuffer)
+  get()
+  exists()
+  remove()
+  list()
+  read()
+  write(fileBuffer)
+  metainfo()
 
 
 
