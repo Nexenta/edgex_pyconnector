@@ -61,24 +61,47 @@ Doing stuff
 API
 ---
 
-.. code-block:: python
+Primary API in edgex_access module is in three objects:
 
 edgex_config
-  load_file(fileName)
-  fromstring(string_config)
+edgex_store
+edgex_obj
 
-edgex_store(edgex_config)
-  list_buckets(recursive)
+:mod:`edgex_access` -- Access S3 stores
+===================================
 
-edgex_obj(edgex_config, name)
-  put(fileBuffer)
-  get()
-  exists()
-  remove()
-  list()
-  read()
-  write(fileBuffer)
-  metainfo()
+.. module:: edgex_access
+   :platform: Unix, MacOSX
+      :synopsis: Access S3 stores using the AWS S3 protocol 
+      .. moduleauthor:: edgex <edgex@nexentaedge.io>
+.. class:: edgex_config
+        Describe the confguration for all the S3 stores and Local Store
+
+.. method:: load_file
+        Load a file configuration 
+.. method:: fromstreing
+        Load a JSON format string of configuration
+
+.. class:: edgex_store
+        Describe one instance of store as describe in the configuration
+.. method:: list_buckets
+        List a set of buckets for this store
+.. class:: edgex_obj
+        Code edgex object for doing I/O 
+.. method:: exists
+        Check of the object exists in the store
+.. method:: metainfo
+        Return the metadata for this object 
+.. method:: get
+        Retrieve the buffer for this object 
+.. method:: read
+        Same as get
+.. method:: put
+        Place a buffer into this object 
+.. method:: write
+        Same as put
+.. method:: remove
+        Delete this object from the store
 
 
 
