@@ -2,13 +2,13 @@ PYTHON=python
 PYDOC=pydoc
 
 MODULE = edgex_access
-VERSION = 0.0.9
+VERSION = 0.0.8
 S3EDGE = s3edge
 SOURCES = src/$(MODULE)/$(MODULE).py
 SETUP = setup.py
 DOCS = docs/$(MODULE).txt docs/s3edgex.txt
 SCRIPTS = s3edgex/s3edgex
-READMES = README.md README.rst LICENSE docs/INSTALL.txt
+READMES = README.md LICENSE docs/edgex_access.rst docs/s3edgex.rst
 TESTS = test/test_$(MODULE).py
 REQ = requirements.txt
 DISTDIR = dist 
@@ -48,7 +48,7 @@ install: $(SOURCES) $(SETUP)
 uninstall:
 	pip uninstall -y $(MODULE)
 
-register: $(DISTDIR)/$(MODULE)-$(VERSION).tar.gz $(SETUP) 
+register: $(SETUP) 
 	twine upload $(DISTDIR)/*
 
 docs/$(MODULE).txt: src/$(MODULE)/$(MODULE).py

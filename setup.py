@@ -29,12 +29,11 @@ HERE = path.abspath(path.dirname(__file__))
 
 ###################################################################
 
-with open(path.join(HERE, 'README.rst'), encoding='utf-8') as f:
-    long_description = f.read()
+long_description = "Edge-X Python connector library for NexentaEdge and AWS using the S3 protocol"
 
 setup(
     name='edgex_access',
-    version='0.0.3',
+    version='0.0.8',
     description = "S3 protocol Data access to NexentaEdge or AWS S3",
     long_description=long_description,
     url = "http://www.github.com/Nexenta/edgex_pyconnector",
