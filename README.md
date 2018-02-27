@@ -157,10 +157,6 @@ rm file.txt foo.txt
 * [requests](https://github.com/requests/requests) - Requests: HTTP for Humans
 * [urllib3](https://github.com/shazow/urllib3) - HTTP client in Python
 
-## Versioning
-
-We use [SemVer](http://semver.org/) for versioning. For the versions available, see the [tags on this repository](https://github.com/your/project/tags). 
-
 ## Authors
 
 * **nexenta** - *Initial work* - [edgex_pyconnector](https://github.com/Nexenta/edgex_pyconnector ) 

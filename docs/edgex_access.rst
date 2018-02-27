@@ -15,7 +15,7 @@ attempting to understand the details of how to access the data objects
 
 Installing
 ----------
-.. code:: sh 
+.. code-block:: sh 
 
   pip3 install edgex_access
 
@@ -23,7 +23,7 @@ Installing
 Loading a S3 configuration 
 --------------------------
 
-.. code:: python
+.. code-block:: python
 
    import edgex_access
 
@@ -35,7 +35,7 @@ Loading a S3 configuration
 
 Doing stuff
 -----------
-.. code:: python
+.. code-block:: python
 
     # name of the primary service in the config 
     # there can only be one primary 
@@ -60,6 +60,8 @@ Doing stuff
 
 API
 ---
+
+.. code-block:: python
 
 edgex_config
   load_file(fileName)

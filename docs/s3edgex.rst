@@ -12,7 +12,7 @@ Configuration
 
 They are kept in ~/.s3edgex and they look somewhat like the following
 
-.. code:: json
+.. code-block:: json
 
         {
 	        "stores" : [ 
@@ -48,7 +48,7 @@ They are kept in ~/.s3edgex and they look somewhat like the following
 
 Commands
 --------
-.. code: bash
+.. code-block:: sh
 
         s3edgex --help
         s3edgex --system
