@@ -1,14 +1,14 @@
 edgex_access
 ============
 
-**edgex_access** is S3 protocol client implementation in **Python 3** which uses
+`edgex_access https://github.com/Nexenta/edgex_pyconnector` is S3 protocol client implementation in **Python 3** which uses
 the latest available API of AWS S3 API
 
 What is this ?
 --------------
 
 AWS S3 is a very popular protocol to read/write data objects on top of the 
-HTTP protocol. **edgex_access** allows access to multiple S3 Services 
+HTTP protocol. `edgex_access https://github.com/Nexenta/edgex_pyconnector`  allows access to multiple S3 Services 
 ( not only Amazon ) to read/write data objects as efficiently as possible. 
 It abstracts out the IO protocol so it is easier to access the data objects without 
 attempting to understand the details of how to access the data objects
@@ -59,7 +59,7 @@ Doing stuff
     edgex_obj.put_obj(remoteName, fileName=localFile)
 
 API
----
+====
 
 Primary API in edgex_access module is in three objects:
 
@@ -67,41 +67,36 @@ edgex_config
 edgex_store
 edgex_obj
 
-:mod:`edgex_access` -- Access S3 stores
-===================================
+edgex_access
+        - Access S3 stores using the AWS S3 protocol 
 
-.. module:: edgex_access
-   :platform: Unix, MacOSX
-      :synopsis: Access S3 stores using the AWS S3 protocol 
-      .. moduleauthor:: edgex <edgex@nexentaedge.io>
-.. class:: edgex_config
-        Describe the confguration for all the S3 stores and Local Store
+edgex_config
+        - Describe the confguration for all the S3 stores and Local Store
+        load_file
+                - Load a file configuration 
+        fromstreing
+                - Load a JSON format string of configuration
 
-.. method:: load_file
-        Load a file configuration 
-.. method:: fromstreing
-        Load a JSON format string of configuration
-
-.. class:: edgex_store
-        Describe one instance of store as describe in the configuration
-.. method:: list_buckets
-        List a set of buckets for this store
-.. class:: edgex_obj
-        Code edgex object for doing I/O 
-.. method:: exists
-        Check of the object exists in the store
-.. method:: metainfo
-        Return the metadata for this object 
-.. method:: get
-        Retrieve the buffer for this object 
-.. method:: read
-        Same as get
-.. method:: put
-        Place a buffer into this object 
-.. method:: write
-        Same as put
-.. method:: remove
-        Delete this object from the store
+edgex_store
+        - Describe one instance of store as describe in the configuration
+        list_buckets
+                - List a set of buckets for this store
+edgex_obj
+        - Code edgex object for doing I/O 
+        exists
+                - Check of the object exists in the store
+        metainfo
+                - Return the metadata for this object 
+        get
+                - Retrieve the buffer for this object 
+        read
+                - Same as get
+        put
+                - Place a buffer into this object 
+        write
+                - Same as put
+        remove
+                - Delete this object from the store
 
 
 
