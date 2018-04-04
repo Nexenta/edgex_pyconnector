@@ -84,13 +84,13 @@ def remove_recursive(dest_obj):
 
 def process_command(command, args, elog):
     cfg_file = expanduser("~") + DEFAULT_CONFIG 
-    eDEFAULT_CONFIG dgex_cfg = edgex_access.edgex_config()
+    edgex_cfg = edgex_access.edgex_config()
     try:
         edgex_cfg.load_file(cfg_file)
     except:
         elog.log_error(" Error loading " + cfg_file  + " config file")
         return
-    primary_store = edgex_cfg.getPrimaryStore()
+    primary_store = edgex_cfg.get_primary_store()
     if (command == "list"):
         edgex_store = primary_store
         if not args:
@@ -211,6 +211,8 @@ def usage():
     print("\t% " + sys.argv[0] + " exists <bucketname/filename>")
 
 def main():
+    if sys.version_info[0] < 3:
+        raise "Must be using Python 3 "
     debug_level = 4
     try:
         opts, remainder = getopt.getopt(sys.argv[1:], "hd:s", ["help", "debug", "system"])

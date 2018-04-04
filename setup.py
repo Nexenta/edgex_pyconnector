@@ -33,7 +33,7 @@ long_description = "Edge-X Python connector library for NexentaEdge and AWS usin
 
 setup(
     name='edgex_access',
-    version='0.0.8',
+    version='0.0.9',
     description = "S3 protocol Data access to NexentaEdge or AWS S3",
     long_description=long_description,
     url = "http://www.github.com/Nexenta/edgex_pyconnector",
@@ -55,11 +55,11 @@ setup(
         "Topic :: Software Development :: Libraries :: Python Modules",
     ],
     scripts=['s3edgex/s3edgex'],
-    keywords='requests edgex_access edgex_obj',
+    keywords='requests edgex_access edgex_store edgex_config edgex_obj',
     packages=find_packages(where='src'),
     package_dir={"": "src"},
     zip_safe=False,
     python_requires = '>=3',
-    install_requires = [ 'urllib3', 'requests_aws4auth', 'requests' , 'simplejson']
+    install_requires = [ 'urllib3', 'requests_aws4auth', 'requests' , 'simplejson', 'lxml']
     )
 

@@ -28,6 +28,7 @@ from requests_aws4auth import AWS4Auth
 from lxml import etree
 from io import StringIO, BytesIO
 
+
 # ============================================================================
 # internal globals
 MIN_PART_SIZE = 5 * 1024 * 1024  # 5MiB
@@ -351,7 +352,6 @@ class edgex_store:
 # ============================================================================
 # complete configuration
 
-
 class edgex_config:
     def __init__(self):
         self.logger = logging.getLogger(EDGEX_ACCESS_LOG_NAME + '.edgex_config')
@@ -370,13 +370,13 @@ class edgex_config:
                 self.primary = self.cfg_data['PRIMARY']
             if self.cfg_data['DEBUG']:
                 self.debug_level = self.cfg_data['DEBUG']
-            if self.cfg_data['HOME']:
-                self.home = self.cfg_data['HOME']
+            if self.cfg_data['LOCAL']:
+                self.local = self.cfg_data['LOCAL']
             else:
                 self.logger.error('Missing HOME in configuration')
                 return
             self.configured = True
-            self.logger.info("configuration  loaded")
+            self.logger.info("configuration loaded")
         else:
             self.logger.info('already configured')
 
@@ -386,7 +386,6 @@ class edgex_config:
             return
         for k in self.store_dict:
             self.store_dict[k].show()
-
     def load_file(self, fileName):
         try:
             dff = open(fileName)
@@ -395,14 +394,14 @@ class edgex_config:
             self.service_name = self.cfg_data['PRIMARY']
         except FileNotFoundError:
             self.logger.error("File not found : " + fileName)
-            raise
+            raise FileNotFound(filename)
         except json.decoder.JSONDecodeError:
             self.logger.error("JSON format error ")
+            raise JsonFormat(filename)
         except:
             self.logger.error("Unexpected Error: ", sys.exc_info()[0])
-            raise
+            raise UnexpectedError(sys.exc_info()[0])
         self.configure()
-
     @classmethod
     def fromstring(self, config_str):
         self.configured = False
@@ -413,7 +412,7 @@ class edgex_config:
             self.logger.error("JSON format error ")
         except:
             self.logger.error("Unexpected Error: ", sys.exc_info()[0])
-            raise
+            raise UnexpectedError(sys.exc_info()[0])
         self.configure()
 
     def save_file(self, fileName):
@@ -425,42 +424,54 @@ class edgex_config:
             self.logger.info("File " + fileName + " saved")
         except:
             self.logger.error("ERROR writing " +  fileName)
-
-    def getStore(self, store_name):
+    def get_stores(self):
+        ret = []
+        for k in self.store_dict:
+            store = self.store_dict[k]
+            ret.append(store.name)
+        return ret
+    def get_local(self):
+        for k in self.store_dict:
+            store = self.store_dict[k]
+            if store.name == self.local:
+                return store
+        return None
+    def get_store(self, store_name):
         try:
             store = self.store_dict[store_name]
             return store
         except:
             return None
-    def saveCfg(self, fileName):
+    def save(self, fileName):
         return self.save_file(fileName)
-    def setPrimary(self, store_name):
+    def set_primary(self, store_name):
         if self.store_dict[store_name]:
             self.primary = store_name
-    def getPrimary(self):
+    def get_primary(self):
         return self.primary
-    def getPrimaryStore(self):
+    def get_primary_store(self):
         if self.primary:
             return self.store_dict[self.primary]
         else:
             return None
-    def getType(self, store_name):
+    def get_type(self, store_name):
         return self.store_dict[store_name]['STORE_TYPE']
-    def getEndpoint(self, store_name):
+    def endpoint(self, store_name):
         return self.store_dict[store_name]['ENDPOINT']
-    def getRegion(self, store_name):
+    def region(self, store_name):
         return self.store_dict[store_name]['REGION']
-    def getSecretKey(self, store_name):
+    def secret(self, store_name):
         return self.store_dict[store_name]['SECRET']
-    def getAccessKey(self, store_name):
+    def access(self, store_name):
         return self.store_dict[store_name]['ACCESS']
-    def getTestBucket(self, store_name):
+    def default_bucket(self, store_name):
         return self.store_dict[store_name]['BUCKET']
-    def getHome(self):
+    def home(self):
         for k in self.store_dict:
             store = self.store_dict[k]
             if ( (store.name == "HOME") and (store.type == "FS") ):
                 return store
+
 # ============================================================================
 # the main edgex_obj that is geared torawrds doing I/O to a Store
 #
@@ -473,7 +484,8 @@ class edgex_obj:
                 self.isfolder = True
         if ((self.store.type == "FS") and os.path.isdir(self.oname)):
                 self.isfolder = True
-
+        if ((self.store.type == "FS") and os.path.isfile(self.oname)):
+                self.islocal = True
         self.logger = logging.getLogger(EDGEX_ACCESS_LOG_NAME + '.edgex_obj')
         self.logger.info(store.name + " " + self.oname)
         if (store.type == "S3"):
@@ -486,6 +498,14 @@ class edgex_obj:
             self.bucketName = store.testbucket
         else:
             raise 
+
+    def islocal(self):
+        return self.islocal
+
+    def pathname(self):
+        print(self.bucketName + self.oname)
+        return self.bucketName + self.oname
+
     def show(self):
         print(self.oname + " " + self.store.type)
         print(self.store_cfg)
