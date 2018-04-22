@@ -17,7 +17,6 @@ import glob
 
 # Added because some sites do not need ssl certification and that generates 
 # warnings in the code.  Disable these warnings for now
-
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 urllib3.disable_warnings(InsecureRequestWarning)    
 
@@ -27,7 +26,12 @@ from requests_aws4auth import AWS4Auth
 
 from lxml import etree
 from io import StringIO, BytesIO
+import re
 
+import threading
+from concurrent.futures import ThreadPoolExecutor, \
+        ProcessPoolExecutor, \
+        as_completed
 
 # ============================================================================
 # internal globals
@@ -71,30 +75,18 @@ class edgex_hasher(object):
 
 # ============================================================================
 # logger
-
-def find_loglevel(debug_level):
-    if (debug_level == 0):
-        return logging.DEBUG
-    elif (debug_level == 1):
-        return logging.INFO
-    elif (debug_level == 2):
-        return logging.WARNING
-    elif (debug_level == 3):
-        return logging.ERROR
-    elif (debug_level == 4):
-        return logging.CRITICAL
-    else:
-        return logging.NOTSET
+logger_level = { 0 : logging.DEBUG, 1 : logging.INFO, 2 : logging.WARNING, 3 : logging.ERROR, 4 : logging.CRITICAL }
 
 class edgex_logger:
+    """
+    edgex_logger : create a log for edgex module debugging and errors
+    """
     def __init__(self, debug_level, logFile):
         file_format='[%(asctime)s] {%(filename)s:%(lineno)d} %(levelname)s - %(message)s'
         if (debug_level >= 4):
             return
-        log_level =  find_loglevel(debug_level)
-        logging.basicConfig(level=log_level,
-                             format=file_format,
-                             datefmt='%m-%d %H:%M',
+        log_level =  logger_level[debug_level]
+        logging.basicConfig(level=log_level, format=file_format, datefmt='%m-%d %H:%M',
                              filename=logFile,
                              filemode='a')
         self.console = logging.StreamHandler()
@@ -102,24 +94,24 @@ class edgex_logger:
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         self.console.setFormatter(formatter)
         self.logger = logging.getLogger(EDGEX_ACCESS_LOG_NAME)
-        #rotateHandler = logging.handlers.RotatingFileHandler(logFile, maxBytes=1048576, backupCount=3)
         self.logger.addHandler(self.console)
+        #rotateHandler = logging.handlers.RotatingFileHandler(logFile, maxBytes=1048576, backupCount=3)
         #self.logger.addHandler(rotateHandler)
-    def enable(self, debug_level):
-        logging.enable(find_loglevel(debug_level))
-    def disable(self, debug_level):
-        logging.disable(find_loglevel(debug_level))
+
     def log_info(self, logData):
         logging.info(logData)
+
     def log_debug(self, logData):
         logging.debug(logData)
+
     def log_error(self, logData):
         logging.error(logData)
+
     def log_critical(self, logData):
         logging.critical(logData)
+
     def log_warning(self, logData):
         logging.warning(logData)
-
 
 # ============================================================================
 # Error objects, Exceptions etc 
@@ -127,6 +119,7 @@ class edgex_logger:
 class edgex_error(Exception):
     def __init__(self, value):
         self.value = value
+
     def __str__(self):
         return "{name}: message: {message}".format(
             name=self.__class__.__name__,
@@ -151,6 +144,10 @@ class InvalidXML(edgex_error):
     pass
 class HTTPErrorCode(edgex_error):
     pass
+class InvalidStore(edgex_error):
+    pass
+class InvalidCommand(edgex_error):
+    pass
 
 edgex_error_codes = {
         'AccessDenied': { 'class' : AccessDenied, 'message' : "Access is denied " },
@@ -161,11 +158,10 @@ edgex_error_codes = {
         'InvalidObject' : { 'class' : InvalidObject, 'message' : "Object is invalid " },
         'InvalidObjectType' : { 'class' : InvalidObjectType, 'message' : "Object is invalid type" },
         'InvalidXML' : { 'class' : InvalidXML, 'message' : "XML is invalid " },
-        'HTTPErrorCode' : { 'class' : HTTPErrorCode, 'message' : "HTTP Error " }
+        'HTTPErrorCode' : { 'class' : HTTPErrorCode, 'message' : "HTTP Error " },
+        'InvalidStore' : { 'class' : InvalidStore, 'message' : "Invalid Store  " },
+        'InvalidCommand' : { 'class' : InvalidCommand, 'message' : "Invalid Command  " }
     }
-
-def error_raise(ecode, emsg):
-    raise(edgex_error_codes[ecode]['class'](edgex_error_codes[ecode]['message']))
 
 ETREE_EXCEPTIONS = (SyntaxError, AttributeError, ValueError, TypeError)
 S3_NS = {'s3' : 'http://s3.amazonaws.com/doc/2006-03-01/'}
@@ -301,25 +297,49 @@ class edgex_s3parser(object):
 
 # Each store definition
 class edgex_store:
-    def __init__(self, cfg):
+    def __init__(self):
+        self.logger = logging.getLogger(EDGEX_ACCESS_LOG_NAME + '.edgex_store')
+        
+    def fromjson(self, cfg):        
         self.name = cfg['NAME']
         self.type = cfg['STORE_TYPE']
         if (self.type == "FS"):
             self.cwd = os.getcwd()
-        self.access = cfg['ACCESS']
-        self.secret = cfg['SECRET']
-        self.endpoint = cfg['ENDPOINT']
-        self.region = cfg['REGION']
-        self.testbucket = cfg['BUCKET']
+        self.default_bucket = cfg['BUCKET']
+        self.bucket = self.default_bucket
         self.token = cfg['TOKEN']
-        self.use_ssl = cfg['SSL']
         self.tag = cfg['TAG']
-        self.logger = logging.getLogger(EDGEX_ACCESS_LOG_NAME + '.edgex_store')
-    def show(self):
-        print(self.name + "\t" + self.type + "\t" + self.testbucket)
-    def getType(self):
+        if (self.type != "FS"):
+            self.access = cfg['ACCESS']
+            self.secret = cfg['SECRET']
+            self.endpoint = cfg['ENDPOINT']
+            self.region = cfg['REGION']
+            self.use_ssl = cfg['SSL']
+
+    def create(self, name, store_type, bucket, access=None, secret=None,\
+            endpoint=None, region=None, token=None, tag=None):
+        self.name = name
+        self.type = store_type
+        if (self.type == "FS"):
+            self.cwd = os.getcwd()
+        self.access = access
+        self.secret = secret
+        self.endpoint = endpoint
+        self.region = region
+        self.bucket = bucket
+        self.token = token 
+        self.tag = tag 
+
+    def get_name(self):
+        return self.name
+    def get_type(self):
         return self.type
-    def list_buckets(self, recursive=False):
+    def get_default_bucket(self):
+        return self.bucket
+    def set_local_pwd(self):
+        self.bucket = os.getcwd()
+        self.default_bucket = self.bucket
+    def list_buckets(self):
         if (self.type == "S3"):
             auth = AWS4Auth(self.access, self.secret, self.region, 's3')
             try:
@@ -328,7 +348,7 @@ class edgex_store:
                     self.logger.debug("GET " + self.endpoint + " " + str(response.status_code))
                     if (response.text.startswith("<!doctype html>") == True):
                         self.logger.error("Illegal HTML response on a GET: ") 
-                        raise
+                        raise InvalidXML(response.text)
                     eroot = edgex_s3list_parser(response.text)
                     top_name = eroot.find_element_one('ListAllMyBucketsResult/Owner/DisplayName')
                     blist = eroot.find_element_list('ListAllMyBucketsResult/Buckets/Bucket', 'Name')
@@ -337,17 +357,17 @@ class edgex_store:
                     self.logger.error("GET " + self.endpoint + " " + str(response.status_code))
                     s3err = edgex_s3error(response) 
                     self.logger.error(s3err.error_text())
+                    raise HTTPErrorCode(str(response.status_code) + " : " + str(response.text))
             except requests.exceptions.RequestException as e:
                 self.logger.error(str(e))
-                return
+                raise e
         elif (self.type == "FS"):
             # show subdirs only and no dot files or dirs
             file_list = [ name for name in os.listdir(self.testbucket) if (os.path.isdir(os.path.join(self.testbucket, name))  and (not name.startswith('.'))) ]
             file_list.sort()
             return self.testbucket, file_list
         else:
-            self.logger.error("list_buckets type: " + self.type + " unknown ")
-
+            raise InvalidStore(self.type)
 
 # ============================================================================
 # complete configuration
@@ -359,27 +379,24 @@ class edgex_config:
         self.debug_level = 4
         self.primary = ""
         self.configured = False
-
+        self.syncio = "SYNC"
     def configure(self):
         if not self.configured:
             stores = self.cfg_data['stores']
             #self.store_list = []
             for x in stores:
-                self.store_dict[ x['NAME'] ] = edgex_store(x)
+                self.store_dict[ x['NAME'] ] = edgex_store()
+                self.store_dict[ x['NAME'] ].fromjson(x)
             if self.cfg_data['PRIMARY']:
                 self.primary = self.cfg_data['PRIMARY']
             if self.cfg_data['DEBUG']:
                 self.debug_level = self.cfg_data['DEBUG']
-            if self.cfg_data['LOCAL']:
-                self.local = self.cfg_data['LOCAL']
-            else:
-                self.logger.error('Missing HOME in configuration')
-                return
+            if self.cfg_data['SYNCIO']:
+                self.syncio = self.cfg_data['SYNCIO']
             self.configured = True
             self.logger.info("configuration loaded")
         else:
             self.logger.info('already configured')
-
     def show_stores(self):
         if not self.configured:
             self.logger.error("Not configured")
@@ -397,11 +414,14 @@ class edgex_config:
             raise FileNotFound(filename)
         except json.decoder.JSONDecodeError:
             self.logger.error("JSON format error ")
+            dff.close()
             raise JsonFormat(filename)
         except:
             self.logger.error("Unexpected Error: ", sys.exc_info()[0])
+            dff.close()
             raise UnexpectedError(sys.exc_info()[0])
         self.configure()
+        dff.close()
     @classmethod
     def fromstring(self, config_str):
         self.configured = False
@@ -414,7 +434,6 @@ class edgex_config:
             self.logger.error("Unexpected Error: ", sys.exc_info()[0])
             raise UnexpectedError(sys.exc_info()[0])
         self.configure()
-
     def save_file(self, fileName):
         try:
             jsondata = simplejson.dumps(self.cfg_data, indent=4, skipkeys=True, sort_keys=True)
@@ -430,120 +449,291 @@ class edgex_config:
             store = self.store_dict[k]
             ret.append(store.name)
         return ret
-    def get_local(self):
-        for k in self.store_dict:
-            store = self.store_dict[k]
-            if store.name == self.local:
-                return store
-        return None
     def get_store(self, store_name):
         try:
             store = self.store_dict[store_name]
             return store
         except:
             return None
-    def save(self, fileName):
-        return self.save_file(fileName)
-    def set_primary(self, store_name):
-        if self.store_dict[store_name]:
-            self.primary = store_name
-    def get_primary(self):
-        return self.primary
     def get_primary_store(self):
         if self.primary:
             return self.store_dict[self.primary]
         else:
             return None
-    def get_type(self, store_name):
-        return self.store_dict[store_name]['STORE_TYPE']
-    def endpoint(self, store_name):
-        return self.store_dict[store_name]['ENDPOINT']
-    def region(self, store_name):
-        return self.store_dict[store_name]['REGION']
-    def secret(self, store_name):
-        return self.store_dict[store_name]['SECRET']
-    def access(self, store_name):
-        return self.store_dict[store_name]['ACCESS']
-    def default_bucket(self, store_name):
-        return self.store_dict[store_name]['BUCKET']
-    def home(self):
-        for k in self.store_dict:
-            store = self.store_dict[k]
-            if ( (store.name == "HOME") and (store.type == "FS") ):
-                return store
+    def get_local_pwd(self):
+        store = edgex_store()
+        store.create("local", "FS", os.getcwd())
+        self.store_dict["local"] = store
+        return store
 
-# ============================================================================
-# the main edgex_obj that is geared torawrds doing I/O to a Store
-#
-class edgex_obj:
-    def __init__(self, store, name):
-        self.oname = name
-        self.isfolder = False
-        self.store = store
-        if ((self.store.type == "S3") and self.oname.endswith("/")):
-                self.isfolder = True
-        if ((self.store.type == "FS") and os.path.isdir(self.oname)):
-                self.isfolder = True
-        if ((self.store.type == "FS") and os.path.isfile(self.oname)):
-                self.islocal = True
-        self.logger = logging.getLogger(EDGEX_ACCESS_LOG_NAME + '.edgex_obj')
-        self.logger.info(store.name + " " + self.oname)
-        if (store.type == "S3"):
-            bname = name.split("/")
-            if (bname[0] is None):
-                self.logger.error(name + " is not valid")
-            else:
-                self.bucketName = bname[0]
-        elif (store.type == "FS"):
-            self.bucketName = store.testbucket
+    def init_syncio(self):
+        if (self.syncio == "SYNCIO"):
+            self.logger.info("Start " + self.syncio)
+        elif (self.syncio == "QUEUED"):
+            self.logger.info("Start " + self.syncio)
+            self.mediator = edgex_mediator(self, 3)
+        elif (self.syncio == "ASYNCIO"):
+            self.logger.info("Start " + self.syncio)
         else:
-            raise 
+            self.logger.error("Unknown mode: " + self.syncio)
 
-    def islocal(self):
-        return self.islocal
+# ===========================================================================
+# edgex_object
+# 
+class edgex_object:
+    def __init__(self, cfg, name, store=None, local_pwd=False):
+        self.oname = name
+        self.logger = logging.getLogger(EDGEX_ACCESS_LOG_NAME + '.edgex_obj')
+        t = datetime.utcnow()
+        self.amzdate = t.strftime('%Y%m%dT%H%M%SZ')
+        self.datestamp = t.strftime('%Y%m%d') # Date w/o time, used in credential scope
+
+        if store is None:
+            is_store = False
+        else:
+            is_store = True
+
+        # first we figure out the stores, parse the names etc
+        sname = self.oname.split(":")
+        if (len(sname) == 2):
+            if is_store is False:
+                store = cfg.get_store(sname[0])
+                if store is None:
+                    if local_pwd is False:
+                        self.logger.error("Error: " + self.oname)
+                        raise InvalidStore(sname[0] + ": Store not found")
+                    else:
+                        store = cfg.get_local_pwd()
+                        is_store=True
+                else:
+                    is_store=True
+
+            if (sname[1].startswith('//')):
+                bpath = re.sub('//', '/',sname[1])
+            else:
+                bpath = self.oname
+        elif (len(sname) == 1):
+            if is_store is False:
+                store = cfg.get_store(sname[0])
+                if store is None:
+                    if local_pwd is False:
+                        self.logger.error("Error: " + self.oname)
+                        raise InvalidStore(sname[0] + ": Store not found")
+                    else:
+                        store = cfg.get_local_pwd()
+                        is_store=True
+                else:
+                    is_store=True
+
+            if (sname[0].startswith('//')):
+                bpath = re.sub('//', '/',sname_1[0])
+            else:
+                bpath = self.oname
+        else:
+            if local_pwd:
+                store = cfg.get_local_pwd()
+                is_store=True
+        #
+        if is_store is False:
+            raise InvalidStore("No store defined: " + name)
+
+        self.store = store
+        self.isfolder = False
+        if (self.store.get_type() == "S3"):
+            if self.oname.endswith("/"):
+                self.isfolder = True
+
+        if (self.store.get_type() == "FS"):
+            if os.path.isdir(self.oname):
+                self.isfolder = True
+            if os.path.isfile(self.oname):
+                self.islocal = True
+
+        # now initialize the bucket, name itself 
+        bname = bpath.split("/")
+        if (len(bname) == 2):
+            self.bucket_name = bname[1]
+            self.obj_name = ""
+        elif (len(bname) > 2):
+            self.bucket_name = bname[1]
+            self.obj_name = "/".join(bname[2:])
+        else:
+            if local_pwd is False:
+                self.logger.error("Error: " + bpath)
+                raise InvalidStore(name + ": Store not found")
+            else:
+                store = cfg.get_local_pwd()
+                self.obj_name = bpath
+
+        if ((self.store.type == "FS") and (local_pwd == True)):
+            self.bucket_name = os.getcwd()
+            self.obj_name = bpath
+
+        if len(self.bucket_name) == 0:
+            self.logger.error("No Bucket name")
+
+        self.logger.info("OBJECT : " + self.pathname())
+
+    def get_store(self):
+        return self.store
+    def store_type(self):
+        return self.store.type
+
+    def bucketname(self):
+        return self.bucket_name
+    def objname(self):
+        return self.obj_name
+
+    def auth(self):
+        auth = AWS4Auth(self.store.access, self.store.secret, self.store.region, 's3')
+        return auth
+
+    # return only the storename://bucketname of this object
+    #
+    def basename(self):
+        if (self.store.get_name() != "local"):
+            fpath = self.store.get_name() + "://" + self.bucket_name + "/" 
+        else:
+            fpath = self.store.get_name() + ":/" + self.bucket_name + "/" 
+        return fpath
+
+    def stat(self, create=False):
+        if (self.store_type() == "FS"):
+            file_found = os.path.exists(self.pathname())
+            if ((file_found is False) and (create is True) and self.obj_name.endswith("/")):
+                self.logger.info("mkdir " + self.pathname())
+                os.makedirs(self.pathname())
+            else:
+                return file_found
+        else:
+            self.logger.error("Error: No stat on store_type: " + self.store_type())
+            raise InvalidStore(str(sef.store_type()))
 
     def pathname(self):
-        print(self.bucketName + self.oname)
-        return self.bucketName + self.oname
+        if (self.store_type() == "FS"):
+            if self.bucket_name and self.obj_name :
+                fpath = self.bucket_name + "/" + self.obj_name
+            else:
+                fpath = self.store.default_bucket + "/" + self.obj_name
+        elif (self.store_type() == "S3"):
+            if self.bucket_name and self.obj_name :
+                fpath = self.store.endpoint + "/" + self.bucket_name + "/" + self.obj_name
+            else:
+                fpath = self.store.default_bucket
+        else:
+            self.logger.error("Error: store_type: " + self.store_type())
+            raise InvalidStore(str(sef.store_type()))
+        return fpath
+# ============================================================================
+# edgex_operations
+#
+valid_ops = [ "list", "get", "put", "meta", "exists", "delete" ]
+class edgex_operation:
+    def __init__(self, opname):
+        found=False
+        for op in valid_ops:
+            if (opname.lower() == op.lower()):
+                found = True
+        if not found:
+            raise InvalidCommand(opname)
+        self.opname = opname
+        self.logger = logging.getLogger(EDGEX_ACCESS_LOG_NAME + '.edgex_objname')
 
-    def show(self):
-        print(self.oname + " " + self.store.type)
-        print(self.store_cfg)
-        print(self.objname)
+    def list(self, obj):
+        final_list = []
+        if (obj.store_type() == "FS"):
+            if obj.isfolder:
+                final_list = os.listdir(obj.pathname())
+                i=0
+                for f in final_list:
+                    if os.path.isdir(obj.pathname() + "/" + f):
+                        final_list[i] = f + "/"
+                    i+=1
+            else:
+                if os.path.isfile(obj.pathname()):
+                    final_list.append(obj.pathname())
+            return final_list
+        elif (obj.store_type() == "S3"):
+            if not obj.isfolder:
+                # for a single object , check if it is there 
+                # and return only the object
+                isthere = self.exists(obj)
+                if isthere:
+                    final_list.append(obj.pathname())
+            else:
+                # in case we received no bucketname and no object name
+                if not obj.bucket_name and not obj.obj_name:
+                    top_name, final_list = obj.store.list_buckets()
+                    return final_list
+                # list the content of the folder and return 
+                url = obj.store.endpoint + "/" + obj.bucket_name + "/" + "?list-type=2&prefix=" + obj.obj_name + "&delimiter=/"
+                try:
+                    response =  requests.get(url, auth=obj.auth(), verify=False)
+                    if response.status_code != 200 or (not response.ok):
+                        raise HTTPErrorCode(str(response.status_code) + " : " + str(response.text))
 
-    def getStore(self):
-        return self.store
-
-    def get(self):
-        if (self.store.type == "FS"):
-            file_size = os.stat(self.oname).st_size
-            if (file_size > MAX_SINGLE_OBJ):
-                self.logger.error('MaxObjectSize', objtype)
-                raise
-            file_data = io.open(self.oname, mode='rb')
-            fdata_now = file_data.read(file_size)
-            return fdata_now
-        elif (self.store.type == "S3"):
-            objp = self.oname.split("/")
-            bucketName = objp[0]
-            objpath = "/".join(objp[1:])
-            auth = AWS4Auth(self.store.access, self.store.secret, \
-                    self.store.region, 's3')
-            url = self.store.endpoint + "/" + bucketName + "/" + objpath
-            try:
-                response =  requests.get(url, auth=auth, verify=False)
-                if response.status_code == 200:
-                    if response.ok:
-                        self.logger.debug("GET " + url + " " + str(response.status_code))
-                        return response.content
+                    if response.headers['Content-Type'] == 'application/xml':
+                        eroot = edgex_s3list_parser(response.text)
+                        top_name = eroot.find_element_one('ListBucketsResult/Name')
+                        contents = eroot.find_element_list('ListBucketsResult/Contents', 'Key')
+                        subdir = eroot.find_element_list_key('ListBucketsResult/CommonPrefixes','Prefix')
+                        for content in contents:
+                            final_list.append(content)
+                        for mdir in subdir:
+                            final_list.append(mdir)
+                        return final_list
                     else:
-                        self.logger.error("GET " + url + " " + str(response.status_code))
-                        self.logger.error("File: " + fileName)
-                        raise requests.HTTPError(response.text)
+                        self.logger.error("Unable to parse:")
+                        self.logger.error(response.text)
+                        self.logger.error(objname + "\t\t" + response.headers['Content-Length'] + "\t\t" + response.headers['Last-Modified'])
+                except requests.exceptions.RequestException as e:
+                    self.logger.error(str(e))
+                    raise e
+                except Exception as e:
+                    self.logger.error(str(e))
+                    raise e
+            return final_list
+        else:
+            raise InvalidStore(obj.store_type())
+
+    def exists(self, obj):
+        if (obj.store.type == "FS"):
+            return os.path.exists(obj.pathname())
+        elif (obj.store.type == "S3"):
+            url = obj.store.endpoint + "/" + obj.bucket_name + "/" + obj.obj_name
+            try:
+                response =  requests.head(url, auth=obj.auth(), verify=False)
+                if response.status_code != 200 or (not response.ok):
+                    self.logger.error("HEAD " + url + " " + str(response.status_code))
+                    self.logger.error(response.text)
+                    #s3err = edgex_s3error(response) 
+                    #self.logger.error(s3err.error_text())
+                    return False
                 else:
-                    s3err = edgex_s3error(response) 
-                    self.logger.error(s3err.error_text())
-                    raise requests.HTTPError(response.text)
+                    self.logger.debug("HEAD " + url + " " + str(response.status_code))
+                    return True
+            except requests.exceptions.RequestException as e:
+                self.logger.error(str(e))
+            except Exception as e:
+                self.logger.error(str(e))
+            return False
+        else:
+            raise InvalidStore(obj.store_type())
+
+    def meta(self, obj):
+        if (obj.store.type == "FS"):
+            metadata = { f:os.stat(f) for f in glob.glob('*') }
+            return metadata
+        elif (obj.store.type == "S3"):
+            url = obj.store.endpoint + "/" + obj.bucket_name + "/" + obj.obj_name
+            try:
+                response =  requests.head(url, auth=obj.auth(), verify=False)
+                if (response.status_code != 200) or (not response.ok):
+                    self.logger.error("HEAD " + url + " " + str(response.status_code))
+                    raise HTTPErrorCode(str(response.status_code) + " : " + str(response.text))
+                else:
+                    self.logger.debug("HEAD " + url + " " + str(response.status_code))
+                    return response.headers
             except requests.exceptions.RequestException as e:
                 self.logger.error(str(e))
                 raise e
@@ -551,26 +741,54 @@ class edgex_obj:
                 self.logger.error(str(e))
                 raise e
         else:
-            self.logger.error('InvalidObject', objtype)
-            raise InvalidObjectType(str(objtype))
+            raise InvalidStore(obj.store_type())
 
-    def put(self, databuf):
-        if (self.store.type == "FS"):
-            if not os.path.exists(os.path.dirname(self.oname)):
+    def get(self, obj):
+        if (obj.store.type == "FS"):
+            file_size = os.stat(obj.pathname()).st_size
+            if (file_size > MAX_SINGLE_OBJ):
+                self.logger.error('MaxObjectSize', objtype)
+                raise
+            file_data = io.open(obj.pathname(), mode='rb')
+            fdata_now = file_data.read(file_size)
+            return fdata_now
+        elif (obj.store.type == "S3"):
+            url = obj.store.endpoint + "/" + obj.bucket_name + "/" + obj.obj_name
+            try:
+                response =  requests.get(url, auth=obj.auth(), verify=False)
+                if (response.status_code != 200) or (not response.ok):
+                    self.logger.error("GET " + url + " " + str(response.status_code))
+                    self.logger.error("File: " + fileName)
+                    s3err = edgex_s3error(response) 
+                    self.logger.error(s3err.error_text())
+                    raise HTTPErrorCode(str(response.status_code) + " : " + str(response.text))
+                elif (response.status_code == 200) and (response.ok):
+                    self.logger.debug("GET " + url + " " + str(response.status_code))
+                    return response.content
+                else:
+                    raise HTTPErrorCode(str(response.status_code) + " : " + str(response.text))
+            except requests.exceptions.RequestException as e:
+                self.logger.error(str(e))
+                raise e
+            except Exception as e:
+                self.logger.error(str(e))
+                raise e
+        else:
+            raise InvalidStore(obj.store_type())
+
+    # TODO: move databuf as a field inside obj 
+    def put(self, obj, databuf):
+        if (obj.store.type == "FS"):
+            if not os.path.exists(os.path.dirname(obj.pathname())):
                 try:
-                    os.makedirs(os.path.dirname(self.oname))
+                    os.makedirs(os.path.dirname(obj.pathname()))
                 except OSError as exc:
                     if exc.errno != errno.EEXIST:
                         raise
-            open(self.oname, 'wb').write(databuf)
+            open(obj.pathname(), 'wb').write(databuf)
             return
-        elif (self.store.type == "S3"):
-            objp = self.oname.split("/")
-            bucketName = objp[0]
-            objpath = "/".join(objp[1:])
-            auth = AWS4Auth(self.store.access, self.store.secret, \
-                    self.store.region, 's3')
-            url = self.store.endpoint + "/" + bucketName + "/" + objpath
+        elif (obj.store.type == "S3"):
+            url = obj.store.endpoint + "/" + obj.bucket_name + "/" + obj.obj_name
             databuf_size = len(databuf)
             metaonheader = {}
             metaonheader['Content-Type'] = 'application/octet-stream'
@@ -580,18 +798,18 @@ class edgex_obj:
             headers.update(metaonheader)
             sha256_hex = edgex_hasher.sha256(databuf).hexdigest()
             try:
-                response = requests.put(url, data=databuf, headers=headers, auth=auth, verify=False)
+                response = requests.put(url, data=databuf, headers=headers, auth=obj.auth(), verify=False)
                 if response.status_code == 200:
                     if response.ok:
                         self.logger.debug("PUT " + url + " " + str(response.status_code))
                         return
                     else:
                         self.logger.error("PUT " + url + " " + str(response.status_code))
-                        raise requests.HTTPError(response.text)
+                        raise HTTPErrorCode(str(response.status_code) + " : " + str(response.text))
                 else:
                     s3err = edgex_s3error(response) 
                     self.logger.error(s3err.error_text())
-                    raise requests.HTTPError(response.text)
+                    raise HTTPErrorCode(str(response.status_code) + " : " + str(response.text))
             except requests.exceptions.RequestException as e:
                 self.logger.error(str(e))
                 raise e
@@ -599,29 +817,28 @@ class edgex_obj:
                 self.logger.error(str(e))
                 raise e
         else:
-            self.logger.error('InvalidObject', objtype)
-            raise InvalidObjectType(str(objtype))
+            raise InvalidStore(obj.store_type())
 
-    def remove(self):
-        if (self.store.type == "FS"):
-            if os.path.exists(self.oname):
-                os.remove(self.oname)
-        elif (self.store.type == "S3"):
-            objp = self.oname.split("/")
-            bucketName = objp[0]
-            objpath = "/".join(objp[1:])
-            auth = AWS4Auth(self.store.access, self.store.secret, \
-                    self.store.region, 's3')
-            url = self.store.endpoint + "/" + bucketName + "/" + objpath
+    def remove(self, obj):
+        if (obj.store.type == "FS"):
+            if os.path.isfile(obj.pathname()):
+                os.remove(obj.pathname())
+                return
+            if os.path.isdir(obj.pathname()):
+                dentries = os.listdir(obj.pathname())
+                if (len(dentries) == 0):
+                    os.rmdir(obj.pathname())
+        elif (obj.store.type == "S3"):
+            url = obj.store.endpoint + "/" + obj.bucket_name + "/" + obj.obj_name
             try:
-                response =  requests.delete(url, auth=auth, verify=False)
+                response =  requests.delete(url, auth=obj.auth(), verify=False)
                 if response.status_code == 200 or response.status_code == 204:
                     if response.ok:
                         self.logger.debug("DELETE " + url + " " + str(response.status_code))
                         return
                     else:
                         self.logger.error("DELETE " + url + " " + str(response.status_code))
-                        raise requests.HTTPError(response.text)
+                        raise HTTPErrorCode(str(response.status_code) + " : " + str(response.text))
                 else:
                     self.logger.error("DELETE " + url + " " + str(response.status_code))
                     s3err = edgex_s3error(response) 
@@ -637,133 +854,37 @@ class edgex_obj:
                 self.logger.error(str(e))
                 raise e
         else:
-            self.logger.error('InvalidObject', objtype)
-            raise InvalidObjectType(str(objecttype))
+            raise InvalidStore(obj.store_type())
 
-    def exists(self):
-        if (self.store.type == "FS"):
-            return os.path.exists(self.oname)
-        elif (self.store.type == "S3"):
-            objp = self.oname.split("/")
-            bucketName = objp[0]
-            objpath = "/".join(objp[1:])
-            auth = AWS4Auth(self.store.access, self.store.secret, \
-                    self.store.region, 's3')
-            url = self.store.endpoint + "/" + bucketName + "/" + objpath
-            try:
-                response =  requests.head(url, auth=auth, verify=False)
-                if response.status_code == 200:
-                    if response.ok:
-                        self.logger.debug("HEAD " + url + " " + str(response.status_code))
-                        return True
-                    else:
-                        self.logger.debug("HEAD " + url + " " + str(response.status_code))
-                        return False
-                else:
-                    self.logger.error("HEAD " + url + " " + str(response.status_code))
-                    #s3err = edgex_s3error(response) 
-                    #self.logger.error(s3err.error_text())
-                    return False
-            except requests.exceptions.RequestException as e:
-                self.logger.error(str(e))
-            except Exception as e:
-                self.logger.error(str(e))
-            return False
-        else:
-            self.logger.error('InvalidObject', objtype)
-            return False
 
-    def list(self):
-        final_list = []
-        if (self.store.type == "FS"):
-            if os.path.isdir(self.oname):
-                final_list = os.listdir(self.oname)
-                i=0
-                for f in final_list:
-                    if os.path.isdir(self.oname + "/" + f):
-                        final_list[i] = f + "/"
-                    i+=1
-            return final_list
-        elif (self.store.type == "S3"):
-            if not self.oname.endswith("/"):
-                self.logger.error(self.oname + " does not end with / ")
-                return final_list
-            objp = self.oname.split("/")
-            bucketName = objp[0]
-            objpath = "/".join(objp[1:])
-            auth = AWS4Auth(self.store.access, self.store.secret, self.store.region, 's3')
-            url = self.store.endpoint + "/" + bucketName + "/" + "?list-type=2&prefix=" + objpath + "&delimiter=/"
-            try:
-                response =  requests.get(url, auth=auth, verify=False)
-                if response.status_code == 200:
-                    if response.ok:
-                        if response.headers['Content-Type'] == 'application/xml':
-                            eroot = edgex_s3list_parser(response.text)
-                            top_name = eroot.find_element_one('ListBucketsResult/Name')
-                            contents = eroot.find_element_list('ListBucketsResult/Contents', 'Key')
-                            subdir = eroot.find_element_list_key('ListBucketsResult/CommonPrefixes','Prefix')
-                            for content in contents:
-                                final_list.append(content)
-                            for mdir in subdir:
-                                final_list.append(mdir)
-                            return final_list
-                        else:
-                            self.logger.error("Unable to parse:")
-                            self.logger.error(response.text)
-                            self.logger.error(objname + "\t\t" + response.headers['Content-Length'] + "\t\t" + response.headers['Last-Modified'])
-                            return final_list
-                    else:
-                        self.logger.error("HEAD " + url + " " + str(response.status_code))
-                        raise requests.HTTPError(response.text)
-                else:
-                    self.logger.error("Error: " + str(response.status_code))
-                    raise requests.HTTPError(response.text)
-            except requests.exceptions.RequestException as e:
-                self.logger.error(str(e))
-                raise e
-            except Exception as e:
-                self.logger.error(str(e))
-                raise e
-        else:
-            self.logger.error('InvalidObject', objtype)
-            raise InvalidObjectType(str(objtype))
-    
-    def read(self):
-        return self.get()
-    def write(self, buffer):
-        return self.put(buffer)
+class edgex_mediator:
+    def __init__(self, cfg, max_workers):
+        self.cfg = cfg 
+        self.texecutor = ThreadPoolExecutor(max_workers)
+        self.pexecutor = ProcessPoolExecutor(max_workers)
+        self.jobs = []
+        self.q = Queue()
+        self.logger = logging.getLogger(EDGEX_ACCESS_LOG_NAME + '.edgex_mediator')
 
-    def metainfo(self):
-        if (self.store.type == "FS"):
-            metadata = { f:os.stat(f) for f in glob.glob('*') }
-            return metadata
-        elif (self.store.type == "S3"):
-            objp = self.oname.split("/")
-            bucketName = objp[0]
-            objpath = "/".join(objp[1:])
-            auth = AWS4Auth(self.store.access, self.store.secret, \
-                    self.store.region, 's3')
-            url = self.store.endpoint + "/" + bucketName + "/" + objpath
+    def submit(self, task, obj, cb):
+        job = self.texecutor.submit(task, obj)
+        job.arg = obj
+        job.add_done_callback(cb)
+        self.jobs.append(job)
+
+    def check_jobs(self):
+        for fjs in futures.as_completed(jobs)
+            mobj = jobs[fjs]
             try:
-                response =  requests.head(url, auth=auth, verify=False)
-                if response.status_code == 200:
-                    if response.ok:
-                        self.logger.debug("HEAD " + url + " " + str(response.status_code))
-                        return response.headers
-                    else:
-                        self.logger.error("HEAD " + url + " " + str(response.status_code))
-                        raise requests.HTTPError(response.text)
-                else:
-                    raise requests.HTTPError(response.text)
-            except requests.exceptions.RequestException as e:
-                self.logger.error(str(e))
-                raise e
-            except Exception as e:
-                self.logger.error(str(e))
-                raise e
-        else:
-            self.logger.error('InvalidObject', objtype)
-            raise InvalidObjectType(str(objtype))
+                mresult = fjs.result()
+            except Exception as exc:
+                self.logger.error("Error : " + mobj.pathname())
+            else:
+                self.logger.info("Done: " + mobj.pathname())
+
+    def cancel(self, job):
+        if job.running():
+            job.cancel()
 
 if __name__ == "__main__":
     pass

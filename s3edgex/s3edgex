@@ -9,6 +9,7 @@ import sys
 import pprint
 import os
 from os.path import expanduser
+import re
 
 import edgex_access
 
@@ -16,73 +17,146 @@ DEFAULT_CONFIG = "/.s3edgex"
 S3EA_LOG="s3edgex.log"
 
 
-def s3edgex_test(edgex_cfg, testName=""):
-    print("Not Yet!!")
-
-def s3edgex_stores(edgex_cfg, args):
-    print("Not Yet!!")
-    pass
-
-def s3edgex_setup():
-    print("Not Yet!!")
-    pass
-
-def list_recursive(dest_obj):
-    if dest_obj.isfolder:
-        lso = dest_obj.list()
-        for f in lso:
-            print(f)
-            dest_r_obj = edgex_access.edgex_obj(dest_obj.getStore(), dest_obj.bucketName + "/" + f)
-            if (f.endswith("/")):
-                list_recursive(dest_r_obj)
+def s3edgex_test(edgex_cfg, test_name=""):
+    if (test_name == "syncio"):
+        edgex_cfg.init_syncio()
+    elif (test_name == "basic"):
+        print("Not Yet!!")
     else:
-        print(dest_obj.oname + "\t", end='')
+        print("Unknown test case: " + test_name)
 
-def put_recursive(source_obj, dest_obj):
-    if source_obj.isfolder:
-        lso = source_obj.list()
-        for f in lso:
-            put_s_obj = edgex_access.edgex_obj(source_obj.getStore(), source_obj.oname + f)
-            put_d_obj = edgex_access.edgex_obj(dest_obj.getStore(), dest_obj.oname + f)
-            if f.endswith("/"):
-                put_recursive(put_s_obj, put_d_obj)
-            else:
-                try:
-                    put_d_obj.put(put_s_obj.get())
-                except:
-                    pass
-        print("")
+def s3edgex_store(edgex_cfg, args):
+    if args is None:
+        stores = edgex_cfg.get_stores()
+        print(str("\t".join(stores)))
+    else:
+        subcmd = args[0]
+        if (subcmd == "list"):
+            stores = edgex_cfg.get_stores()
+            print(str("\t".join(stores)))
+        elif (subcmd == "add"):
+            print("Not Yet!")
+        elif (subcmd == "del"):
+            print("Not Yet!")
+        else:
+            print("Unknown command: " + subcmd)
 
-def get_recursive(remote_obj, local_obj):
-    if remote_obj.isfolder:
-        lso = remote_obj.list()
-        for f in lso:
-            get_s_obj = edgex_access.edgex_obj(remote_obj.getStore(), remote_obj.bucketName + "/" + f)
-            get_d_obj = edgex_access.edgex_obj(local_obj.getStore(), f)
-            if f.endswith("/"):
-                get_recursive(get_s_obj, get_d_obj)
-            else:
-                try:
-                    get_d_obj.put(get_s_obj.get())
-                except:
-                    pass
-        print("")
+def s3edgex_setup(edgex_cfg, args):
+    if args is None:
+        print("setup create | show ")
+    else:
+        subcmd = args[0]
+        if (subcmd == "create"):
+            print("Not Yet!")
+        elif (subcmd == "show"):
+            print("Not Yet!")
+        else:
+            print("Unknown command: " + subcmd)
 
-def remove_recursive(dest_obj):
+def list_recursive(cfg, dest_obj, local_obj, dest_base):
     if dest_obj.isfolder:
-        lso = dest_obj.list()
+        edgex_op = edgex_access.edgex_operation('list')
+        lso = edgex_op.list(dest_obj)
         for f in lso:
-            dest_r_obj = edgex_access.edgex_obj(dest_obj.getStore(), dest_obj.bucketName + "/" + f)
-            if (f.endswith("/")):
-                remove_recursive(dest_r_obj)
+            if not local_obj:
+                next_name = dest_base + f
             else:
+                next_name = dest_obj.basename() + f
+            dest_r_obj = edgex_access.edgex_object(cfg, next_name, dest_obj.get_store(), local_pwd=local_obj)
+            if (f.endswith("/")):
+                print("" + f)
+                list_recursive(cfg, dest_r_obj, local_obj, dest_base)
+            else:
+                if local_obj:
+                    print("\t" + f)
+                else:
+                    print("" + f)
+    else:
+        print(dest_obj.pathname())
+
+def put_recursive(cfg, source_obj, dest_obj, local_obj, source_base):
+    if source_obj.isfolder:
+        edgex_op = edgex_access.edgex_operation('list')
+        lso = edgex_op.list(source_obj)
+        for f in lso:
+            dest_next = dest_obj.basename() + f
+            if not local_obj:
+                source_next = source_obj.basename() + f
+            else:
+                # TODO: 
+                # source_next = source_base + f
+                source_next = source_obj.objname() + f
+            put_s_obj = edgex_access.edgex_object(cfg, source_next, store=source_obj.get_store(), local_pwd=local_obj)
+            put_d_obj = edgex_access.edgex_object(cfg, dest_next, store=dest_obj.get_store())
+            if f.endswith("/"):
+                put_recursive(cfg, put_s_obj, put_d_obj, local_obj, dest_base)
+            else:
+                edgex_op_write = edgex_access.edgex_operation('put')
+                edgex_op_read = edgex_access.edgex_operation('get')
                 try:
-                    dest_r_obj.remove()
+                    edgex_op_write.put(put_d_obj, edgex_op_read.get(put_s_obj))
                 except:
                     pass
         print("")
 
-def process_command(command, args, elog):
+def get_recursive(cfg, source_obj, dest_obj, local_obj, dest_base):
+    
+    if source_obj.isfolder:
+        edgex_op = edgex_access.edgex_operation('list')
+        lso = edgex_op.list(source_obj)
+
+        for f in lso:
+            source_next = source_obj.basename() + f
+            if not local_obj:
+                dest_next = dest_obj.basename() + f
+            else:
+                dest_next = dest_base + f
+
+            get_s_obj = edgex_access.edgex_object(cfg, source_next, store=source_obj.get_store())
+            get_d_obj = edgex_access.edgex_object(cfg, dest_next, store=dest_obj.get_store(), local_pwd=local_obj)
+            
+            if f.endswith("/"):
+                get_recursive(cfg, get_s_obj, get_d_obj, local_obj, dest_base)
+            else:
+                edgex_op_write = edgex_access.edgex_operation('put')
+                edgex_op_read = edgex_access.edgex_operation('get')
+                try:
+                    edgex_op_write.put(get_d_obj, edgex_op_read.get(get_s_obj))
+                except:
+                    pass
+        print("")
+
+def remove_recursive(cfg, dest_obj, local_obj, dest_base):
+    if dest_obj.isfolder:
+        edgex_op = edgex_access.edgex_operation('list')
+        lso = edgex_op.list(dest_obj)
+        for f in lso:
+            if not local_obj:
+                next_name = dest_base + f
+            else:
+                next_name = dest_obj.objname() + f
+
+            dest_r_obj = edgex_access.edgex_object(cfg, next_name, dest_obj.get_store(), local_pwd=local_obj)
+            
+            if (f.endswith("/")):
+                remove_recursive(cfg, dest_r_obj, local_obj, dest_base)
+            else:
+                try:
+                    edgex_op = edgex_access.edgex_operation('delete')
+                    edgex_op.remove(dest_r_obj)
+                except:
+                    pass
+
+            try:
+                edgex_op = edgex_access.edgex_operation('delete')
+                edgex_op.remove(dest_obj)
+            except:
+                pass
+
+        print("")
+
+
+def process_command(command, elog, args=None):
     cfg_file = expanduser("~") + DEFAULT_CONFIG 
     edgex_cfg = edgex_access.edgex_config()
     try:
@@ -100,77 +174,207 @@ def process_command(command, args, elog):
             for it in items:
                 print("\t" + it)
             return
+        recursive = False
+        localObj = False
         if (args[0] == "-r"):
             recursive = True
+        elif (args[0] == "-l") :
+            localObj = True
         else:
             recursive = False
+            localObj = False
         if args:
-            if recursive:
+            if (len(args) > 1):
+                if (args[1] == "-l"):
+                    localObj = True
+            if recursive and not localObj:
                 objname = args[1]
-            else:
+            elif localObj and not recursive:
+                objname = args[1]
+            elif recursive and localObj:
+                objname = args[2]
+            else: # not recursive and not localObj
                 objname = args[0]
-            edgex_obj = edgex_access.edgex_obj(edgex_cfg.getPrimaryStore(), objname)
-            if recursive:
-                list_recursive(edgex_obj)
-            else:
-                items = edgex_obj.list()
-                print(objname)
-                for it in items:
-                    print("\t" + it)
+            try:
+                edgex_obj = edgex_access.edgex_object(edgex_cfg, objname, edgex_cfg.get_primary_store(), local_pwd=localObj)
+                if recursive:
+                    list_recursive(edgex_cfg, edgex_obj, localObj, edgex_obj.basename())
+                else:
+                    edgex_op = edgex_access.edgex_operation('list')
+                    items = edgex_op.list(edgex_obj)
+                    print(objname)
+                    for it in items:
+                        print("\t" + it)
+            except Exception as e:
+                print(str(e))
+                return
     elif (command == "setup"):
-        s3edgex_setup()
+        s3edgex_setup(edgex_cfg, args)
     elif (command == "store"):
         s3edgex_store(edgex_cfg, args)
+    elif (command == "syncio"):
+        s3edgex_syncio(edgex_cfg, args)
     elif (command == "lsb"):
         edgex_store = primary_store
-        name, items = edgex_store.list_buckets()
+        try:
+            name, items = edgex_store.list_buckets()
+        except:
+            return
         print(name)
         for it in items:
             print("\t" + it)
     elif (command == "exists"):
-        edgex_obj = edgex_access.edgex_obj(edgex_cfg.getPrimaryStore(), args[0])
-        f = edgex_obj.exists()
-        print(args[0] + " : " + str(f))
-    elif (command == "meta"):
-        edgex_obj = edgex_access.edgex_obj(edgex_cfg.getPrimaryStore(), args[0])
-        f = edgex_obj.metainfo()
+        if (args[0] == "-l"):
+            localObj = True
+            oname = args[1]
+        else:
+            localObj = False
+            oname = args[0]
+
+        edgex_obj = edgex_access.edgex_object(edgex_cfg, oname, local_pwd=localObj)
+        edgex_op = edgex_access.edgex_operation('exists')
+        try:
+            f = edgex_op.exists(edgex_obj)
+        except:
+            return
+        print(oname + " : " + str(f))
+    elif (command == "info"):
+        if (args[0] == "-l"):
+            localObj = True
+            oname = args[1]
+        else:
+            localObj = False
+            oname = args[0]
+
+        edgex_obj = edgex_access.edgex_object(edgex_cfg, oname, local_pwd=localObj)
+        edgex_op = edgex_access.edgex_operation('meta')
+        try:
+            f = edgex_op.meta(edgex_obj)
+        except:
+            return
         pprint.pprint(str(f))
+
     elif (command == "put"):
+        recursive = False
+        local_obj = False
         if (args[0] == "-r"):
-            # todo: check number of args
-            remote_obj = edgex_access.edgex_obj(edgex_cfg.getPrimaryStore(), args[1])
-            local_obj = edgex_access.edgex_obj(edgex_cfg.getHome(), args[2])
-            put_recursive(local_obj, remote_obj)
+            recursive = True
+        elif (args[0] == "-l") :
+            local_obj = True
         else:
-            # todo: check number of args
-            remote_obj = edgex_access.edgex_obj(edgex_cfg.getPrimaryStore(), args[0])
-            local_obj = edgex_access.edgex_obj(edgex_cfg.getHome(), args[1])
+            recursive = False
+            local_obj = False
+        if args:
+            if (len(args) > 1):
+                if (args[1] == "-l"):
+                    local_obj = True
+            if recursive and not local_obj:
+                dest_objname = args[1]
+                source_objname = args[2]
+            elif local_obj and not recursive:
+                dest_objname = args[1]
+                source_objname = args[2]
+            elif recursive and local_obj:
+                dest_objname = args[2]
+                source_objname = args[3]
+            else: # not recursive and not localObj
+                dest_objname = args[0]
+                source_objname = args[1]
             try:
-                remote_obj.put(local_obj.get())
-            except:
-                pass
+                source_obj = edgex_access.edgex_object(edgex_cfg, source_objname, local_pwd=local_obj)
+                dest_obj = edgex_access.edgex_object(edgex_cfg, dest_objname)
+                if recursive:
+                    put_recursive(edgex_cfg, source_obj, dest_obj, local_obj, dest_obj.objname())
+                else:
+                    edgex_op_write = edgex_access.edgex_operation('put')
+                    edgex_op_read = edgex_access.edgex_operation('get')
+
+                    edgex_op_write.put(dest_obj, edgex_op_read.get(source_obj))
+
+            except Exception as e:
+                print(str(e))
+                return
+
     elif (command == "get"):
+
+        recursive = False
+        local_obj = False
         if (args[0] == "-r"):
-            remote_obj = edgex_access.edgex_obj(edgex_cfg.getPrimaryStore(), args[1])
-            local_obj = edgex_access.edgex_obj(edgex_cfg.getHome(), args[2])
-            get_recursive(remote_obj, local_obj)
+            recursive = True
+        elif (args[0] == "-l") :
+            local_obj = True
         else:
-            remote_obj = edgex_access.edgex_obj(edgex_cfg.getPrimaryStore(), args[0])
-            local_obj = edgex_access.edgex_obj(edgex_cfg.getHome(), args[1])
+            recursive = False
+            local_obj = False
+        if args:
+            if (len(args) > 1):
+                if (args[1] == "-l"):
+                    local_obj = True
+            if recursive and not local_obj:
+                source_objname = args[1]
+                dest_objname = args[2]
+            elif local_obj and not recursive:
+                source_objname = args[1]
+                dest_objname = args[2]
+            elif recursive and local_obj:
+                source_objname = args[2]
+                dest_objname = args[3]
+            else: # not recursive and not localObj
+                source_objname = args[0]
+                dest_objname = args[1]
+
             try:
-                local_obj.put(remote_obj.get())
-            except:
-                pass
+                source_obj = edgex_access.edgex_object(edgex_cfg, source_objname)
+                dest_obj = edgex_access.edgex_object(edgex_cfg, dest_objname, local_pwd=local_obj)
+                dest_obj.stat(create=True)
+
+                if recursive:
+                    get_recursive(edgex_cfg, source_obj, dest_obj, local_obj, dest_obj.objname())
+                else:
+                    edgex_op_write = edgex_access.edgex_operation('put')
+                    edgex_op_read = edgex_access.edgex_operation('get')
+
+                    edgex_op_write.put(dest_obj, edgex_op_read.get(source_obj))
+
+            except Exception as e:
+                print(str(e))
+                return
+
     elif (command == "del"):
+
+        recursive = False
+        local_obj = False
         if (args[0] == "-r"):
-            remote_obj = edgex_access.edgex_obj(edgex_cfg.getPrimaryStore(), args[1])
-            remove_recursive(remote_obj)
+            recursive = True
+        elif (args[0] == "-l") :
+            local_obj = True
         else:
-            remote_obj = edgex_access.edgex_obj(edgex_cfg.getPrimaryStore(), args[0])
+            recursive = False
+            local_obj = False
+
+        if args:
+            if (len(args) > 1):
+                if (args[1] == "-l"):
+                    local_obj = True
+            if recursive and not local_obj:
+                del_objname = args[1]
+            elif local_obj and not recursive:
+                del_objname = args[1]
+            elif recursive and local_obj:
+                del_objname = args[2]
+            else: # not recursive and not localObj
+                del_objname = args[0]
             try:
-                remote_obj.remove()
-            except:
-                pass
+                del_obj = edgex_access.edgex_object(edgex_cfg, del_objname, local_pwd=local_obj)
+                if recursive:
+                    remove_recursive(edgex_cfg, del_obj, local_obj, del_obj.objname())
+                else:
+                    edgex_op = edgex_access.edgex_operation('delete')
+                    edgex_op.remove(del_obj)
+            except Exception as e:
+                print(str(e))
+                return
+
     elif (command == "test"):
         if args:
             s3edgex_test(edgex_cfg, testName=args[0])
@@ -197,8 +401,11 @@ def usage():
     print("\t\tput")
     print("\t\tget")
     print("\t\tdel")
+    print("\t\tinfo")
     print("\t\ttest")
     print("Examples:")
+    print("\t% " + sys.argv[0] + " [ --debug <level> ] setup [ create show ]")
+    print("\t% " + sys.argv[0] + " [ --debug <level> ] store [ list add del ]")
     print("\t% " + sys.argv[0] + " [ --debug <level> ] list [ -r ]")
     print("\t% " + sys.argv[0] + " [ --debug <level> ] list [ -r ] <bucketname>")
     print("\t% " + sys.argv[0] + " get <bucketname/filename> <filename>")
@@ -237,9 +444,9 @@ def main():
 
     command = remainder[0]
     if len(remainder[1:]) >= 1:
-        process_command(command, remainder[1:], elog)
+        process_command(command, elog, remainder[1:])
     else:
-        process_command(command, None, elog)
+        process_command(command, elog)
 
     elog.log_info(sys.argv[0] + " ended")
 
