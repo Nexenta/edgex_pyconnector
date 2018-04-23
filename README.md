@@ -34,17 +34,41 @@ The configuration as a store marked as a primary S3 store.
 Example:
 ```python
 
-primary_store = edgex_cfg.getPrimaryStore()
+primary_store = edgex_cfg.get_primary_store()
 primary_store.show()
 buckets = primary_store.list_buckets()
 
 ```
 
-### edgex_obj
+### edgex_object
 
-Each data object in any store is represented as a edgex_obj. At the time of 
-the object creation , only the name is used. Most of the methods of this objects
-are more I/O oriented. 
+Each data object in any store is represented as an edgex_object. At the time of 
+the object creation , only the name is used. The edge_object uses the URI passed in 
+and checks against the stores to determine which store this object is part of.
+
+edgex_object parses the URI to determine which bucket this is a prt of
+
+
+### edgex_operation
+
+edgex_operation is what is used with an object to retrieve the edgex_object from the 
+store or place it in the store accordingly. 
+
+Typical operations are :
+	put, get, del, exists, info
+
+Example:
+
+```python
+
+del_objname = "aws_s3://mybucket/file_foo.txt"
+del_obj = edgex_access.edgex_object(edgex_cfg, del_objname)
+
+# now do the actual delete using the operation
+edgex_op = edgex_access.edgex_operation('delete')
+edgex_op.remove(del_obj)
+
+```
 
 Here is a small example to whet your appetite
 
@@ -52,31 +76,41 @@ Here is a small example to whet your appetite
 
 # Check of the object exists in the store
 oname = "mybuk1/high_tech_stocks.txt"
-primary_store = edgex_cfg.getPrimaryStore()
+primary_store = edgex_cfg.get_primary_store()
 remote_edgex_obj = edgex_access.edgex_obj(primary_store, oname)
-is_there = remote_edgex_obj.exists()
+exist_op = edgex_access.exged_operaton('exists')
+isthere = edgex_op.exists(remote_edgex_obj)
 
 # is_there is True or False
 
 # Let's get the object
-stock_file_buffer = remote_edgex_obj.get()
+edgex_op_read = edgex_access.edgex_operation('get')
+stock_file_buffer = exdgex_op_read.get(remote_edgex_obj)
 stock_file_name = "high_tech_stocks.txt"
 
-# find my local home directory 
-home_store = edgex_cfg.getHome()
+# decide where to place this file
+dest_obj_name = "aws_s3://mybuck1/stock_file.txt"
+dest_obj = edgex_access.edgex_object(primary_store, dest_objname)
 
-# create a local object representation in my home directory 
+# create a local object representation of the stocks file.
 local_edgex_obj = edgex_access.edgex_obj(home_store, stock_file_name)
 
-# now put the remote buffer we got into the local object and write it out
-local_edgex_obj.put(stock_file_buffer)
+# now let's create the operations
+
+edgex_op_write = edgex_access.edgex_operation('put')
+edgex_op_read = edgex_access.edgex_operation('get')
+
+# read the buffer and put it
+edgex_op_write.put(dest_obj, edgex_op_read.get(local_edgex_obj))
 
 # Let's remove the remote file
-remote_edgex_obj.remove()
+edgex_op_del = edgex_access.edgex_operation('delete')
+edgex_op_del(dest_obj.remove()
+
 
 ```
 
-edgex_access is in development. SOme of the features are missing and there are bugs 
+edgex_access is currently in development. Some of the features are missing and there are bugs 
 Please refer to the 'Development Status" below.
 
 ### Prerequisites & Requirements
@@ -119,6 +153,10 @@ s3edgex setup
 ```
 Edit the file ~/.s3edgex, and add your ACCESS and SECRET Keys for S3 store access
 Once you have added the S3 store configurations, check that they are available
+There is sample file under s3edgex/dot.s3edgex.sample in this git repo .
+Please use it as an example.
+
+
 ```
 s3edgex store list
 ```
@@ -131,15 +169,15 @@ s3edgex store primary AWS-s3
 Let's upload a file to our primary S3 store
 
 ```
-s3edgex put /mybucket/file.txt file.txt
+s3edgex put -l aws_s3://mybucket/file.txt file.txt
 ```
 Now checkif it is there 
 ```
-s3edgex exists /mybucket/file.txt
+s3edgex exists aws_s3://mybucket/file.txt
 ```
 Let's get the file back with a different name
 ```
-s3edgex get /mybucket/file.txt foo.txt
+s3edgex get -l aws_s3://mybucket/file.txt foo.txt
 ```
 Now make sure the checksums match for both the files
 ```
@@ -148,8 +186,8 @@ sum foo.txt
 ```
 Cleanup the files now
 ```
-s3edgex del /mybucket/file.txt
-rm file.txt foo.txt
+s3edgex del aws_s3://mybucket/file.txt
+s3edgex del -l foo.txt
 ```
 
 ## Built With

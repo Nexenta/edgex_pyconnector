@@ -61,32 +61,50 @@ Doing stuff
 API
 ====
 
-Primary API in edgex_access module is in three objects:
+Primary API in edgex_access module is in these objects:
 
 edgex_config
 edgex_store
-edgex_obj
+edgex_object
 
 edgex_access
         - Access S3 stores using the AWS S3 protocol 
 
 edgex_config
-        - Describe the confguration for all the S3 stores and Local Store
-        load_file
-                - Load a file configuration 
-        fromstreing
-                - Load a JSON format string of configuration
+        - Describe the confguration for all the S3 stores and Local Store load_file
+        - Load a file configuration fromstreing
+        - Load a JSON format string of configuration
 
 edgex_store
-        - Describe one instance of store as describe in the configuration
-        list_buckets
-                - List a set of buckets for this store
-edgex_obj
-        - Code edgex object for doing I/O 
-        exists
-                - Check of the object exists in the store
-        metainfo
-                - Return the metadata for this object 
+        - Describe one instance of store as describe in the configuration list_buckets
+        - List a set of buckets for this store edgex_obj
+        - Code edgex object for doing I/O exists
+        - Check of the object exists in the store metainfo
+        - Return the metadata for this object 
+
+edgex_object
+        - Create an object instance based on the string representing the object. 
+          Each string representation must have the store name or it is assumed to be
+          picked up from the local present working directory if the flag is provided
+
+        Example:
+
+```python
+
+objname = "aws_s3://mybucket"
+obj = edgex_access.edgex_object(edgex_cfg, objname)
+print("URI : " + obj.pathname())
+print("Bucket : " + obj.bucketname())
+print("Object : " + obj.objname())
+
+```
+
+edgex_operation
+        - Do the I/O operations using these methods, and the object supplied
+        - Does the I/O based on the store type to determine how to do the I/O
+
+        Available methods:
+
         get
                 - Retrieve the buffer for this object 
         read
@@ -97,6 +115,10 @@ edgex_obj
                 - Same as put
         remove
                 - Delete this object from the store
+        exists
+                - Check if the object actually exists or not
+        info
+                - Determine the meta only for this object
 
 
 

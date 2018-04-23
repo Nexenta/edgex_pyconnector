@@ -16,7 +16,6 @@ import edgex_access
 DEFAULT_CONFIG = "/.s3edgex"
 S3EA_LOG="s3edgex.log"
 
-
 def s3edgex_test(edgex_cfg, test_name=""):
     if (test_name == "syncio"):
         edgex_cfg.init_syncio()
