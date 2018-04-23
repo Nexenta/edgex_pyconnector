@@ -33,7 +33,7 @@ long_description = "Edge-X Python connector library for NexentaEdge and AWS usin
 
 setup(
     name='edgex_access',
-    version='0.0.9',
+    version='0.0.11',
     description = "S3 protocol Data access to NexentaEdge or AWS S3",
     long_description=long_description,
     url = "http://www.github.com/Nexenta/edgex_pyconnector",

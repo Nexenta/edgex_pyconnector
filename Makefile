@@ -2,7 +2,7 @@ PYTHON=python
 PYDOC=pydoc
 
 MODULE = edgex_access
-VERSION = 0.0.9
+VERSION = 0.0.11
 S3EDGE = s3edge
 SOURCES = src/$(MODULE)/$(MODULE).py
 SETUP = setup.py
@@ -49,7 +49,7 @@ uninstall:
 	pip uninstall -y $(MODULE)
 
 register: $(SETUP) 
-	twine upload $(DISTDIR)/*
+	echo "twine upload dist/*"
 
 docs/$(MODULE).txt: src/$(MODULE)/$(MODULE).py
 	echo "TODO pydoc"
