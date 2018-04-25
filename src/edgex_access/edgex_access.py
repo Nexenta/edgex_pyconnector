@@ -466,16 +466,6 @@ class edgex_config:
         self.store_dict["local"] = store
         return store
 
-    def init_syncio(self):
-        if (self.syncio == "SYNCIO"):
-            self.logger.info("Start " + self.syncio)
-        elif (self.syncio == "QUEUED"):
-            self.logger.info("Start " + self.syncio)
-            self.mediator = edgex_mediator(self, 3)
-        elif (self.syncio == "ASYNCIO"):
-            self.logger.info("Start " + self.syncio)
-        else:
-            self.logger.error("Unknown mode: " + self.syncio)
 
 # ===========================================================================
 # edgex_object
@@ -855,36 +845,6 @@ class edgex_operation:
                 raise e
         else:
             raise InvalidStore(obj.store_type())
-
-
-class edgex_mediator:
-    def __init__(self, cfg, max_workers):
-        self.cfg = cfg 
-        self.texecutor = ThreadPoolExecutor(max_workers)
-        self.pexecutor = ProcessPoolExecutor(max_workers)
-        self.jobs = []
-        self.q = Queue()
-        self.logger = logging.getLogger(EDGEX_ACCESS_LOG_NAME + '.edgex_mediator')
-
-    def submit(self, task, obj, cb):
-        job = self.texecutor.submit(task, obj)
-        job.arg = obj
-        job.add_done_callback(cb)
-        self.jobs.append(job)
-
-    def check_jobs(self):
-        for fjs in futures.as_completed(jobs)
-            mobj = jobs[fjs]
-            try:
-                mresult = fjs.result()
-            except Exception as exc:
-                self.logger.error("Error : " + mobj.pathname())
-            else:
-                self.logger.info("Done: " + mobj.pathname())
-
-    def cancel(self, job):
-        if job.running():
-            job.cancel()
 
 if __name__ == "__main__":
     pass

@@ -10,15 +10,48 @@ import pprint
 import os
 from os.path import expanduser
 import re
+import simplejson as json
 
 import edgex_access
 
 DEFAULT_CONFIG = "/.s3edgex"
 S3EA_LOG="s3edgex.log"
 
+
+sample_config = ' \
+{ \
+	"stores" : [ \
+	{ \
+		"NAME" : "edgex", \
+		"STORE_TYPE" :"S3", \
+		"ACCESS" : "", \
+		"SECRET" : "", \
+		"REGION" : "", \
+		"ENDPOINT" : "https://edge.nexenta.com", \
+		"TOKEN" : "", \
+		"SSL" : "False", \
+		"BUCKET" : "", \
+		"TAG" : "edgex" \
+	}, \
+	{ \
+		"NAME" : "ix", \
+		"STORE_TYPE" :"FS", \
+		"TOKEN" : "", \
+		"BUCKET" : "/Users/sample.user/Workspace", \
+		"TAG" : "ix"  \
+	} \
+	], \
+	"PRIMARY" : "edgex", \
+	"SYNCIO" : "QUEUED", \
+	"DEBUG" : 5 \
+} \
+'
+
+
+
 def s3edgex_test(edgex_cfg, test_name=""):
     if (test_name == "syncio"):
-        edgex_cfg.init_syncio()
+        print("Not Yet!!")
     elif (test_name == "basic"):
         print("Not Yet!!")
     else:
@@ -27,12 +60,24 @@ def s3edgex_test(edgex_cfg, test_name=""):
 def s3edgex_store(edgex_cfg, args):
     if args is None:
         stores = edgex_cfg.get_stores()
-        print(str("\t".join(stores)))
+        primary_store = edgex_cfg.get_primary_store()
+        for st in stores:
+            store = edgex_cfg.get_store(st)
+            if (st == primary_store.get_name()):
+                print(st + "\t" + store.get_type() + "\t" + "PRIMARY")
+            else:
+                print(st + "\t" + store.get_type())
     else:
         subcmd = args[0]
         if (subcmd == "list"):
             stores = edgex_cfg.get_stores()
-            print(str("\t".join(stores)))
+            primary_store = edgex_cfg.get_primary_store()
+            for st in stores:
+                store = edgex_cfg.get_store(st)
+                if (st == primary_store.get_name()):
+                    print(st + "\t" + store.get_type() + "\t" + "PRIMARY")
+                else:
+                    print(st + "\t" + store.get_type())
         elif (subcmd == "add"):
             print("Not Yet!")
         elif (subcmd == "del"):
@@ -40,15 +85,24 @@ def s3edgex_store(edgex_cfg, args):
         else:
             print("Unknown command: " + subcmd)
 
-def s3edgex_setup(edgex_cfg, args):
+def s3edgex_setup(args):
     if args is None:
         print("setup create | show ")
     else:
         subcmd = args[0]
+        cfg_file = expanduser("~") + DEFAULT_CONFIG 
         if (subcmd == "create"):
-            print("Not Yet!")
+            if (os.path.exists(cfg_file)):
+                print(cfg_file + " already exists")
+                return
+            dot_config = json.loads(sample_config)
+            with open(cfg_file, 'a+') as f:
+                json.dump(dot_config, f)
         elif (subcmd == "show"):
-            print("Not Yet!")
+            if (os.path.exists(cfg_file)):
+                with open(cfg_file, 'r') as f:
+                    dot_config = json.load(f)
+                pprint.pprint(json.dumps(dot_config, indent=4))
         else:
             print("Unknown command: " + subcmd)
 
@@ -157,6 +211,10 @@ def remove_recursive(cfg, dest_obj, local_obj, dest_base):
 
 def process_command(command, elog, args=None):
     cfg_file = expanduser("~") + DEFAULT_CONFIG 
+    if (command == "setup"):
+        s3edgex_setup(args)
+        return
+
     edgex_cfg = edgex_access.edgex_config()
     try:
         edgex_cfg.load_file(cfg_file)
@@ -174,28 +232,30 @@ def process_command(command, elog, args=None):
                 print("\t" + it)
             return
         recursive = False
-        localObj = False
+        local_obj = False
         if (args[0] == "-r"):
             recursive = True
         elif (args[0] == "-l") :
-            localObj = True
+            local_obj = True
         else:
             recursive = False
-            localObj = False
+            local_obj = False
         if args:
             if (len(args) > 1):
                 if (args[1] == "-l"):
-                    localObj = True
-            if recursive and not localObj:
+                    local_obj = True
+            if recursive and not local_obj:
                 objname = args[1]
-            elif localObj and not recursive:
+            elif local_obj and not recursive:
                 objname = args[1]
-            elif recursive and localObj:
+            elif recursive and local_obj:
                 objname = args[2]
-            else: # not recursive and not localObj
+            else: # not recursive and not local_obj
                 objname = args[0]
+            
             try:
-                edgex_obj = edgex_access.edgex_object(edgex_cfg, objname, edgex_cfg.get_primary_store(), local_pwd=localObj)
+                edgex_obj = edgex_access.edgex_object(edgex_cfg, objname, local_pwd=local_obj)
+
                 if recursive:
                     list_recursive(edgex_cfg, edgex_obj, localObj, edgex_obj.basename())
                 else:
@@ -207,8 +267,6 @@ def process_command(command, elog, args=None):
             except Exception as e:
                 print(str(e))
                 return
-    elif (command == "setup"):
-        s3edgex_setup(edgex_cfg, args)
     elif (command == "store"):
         s3edgex_store(edgex_cfg, args)
     elif (command == "syncio"):
@@ -224,13 +282,13 @@ def process_command(command, elog, args=None):
             print("\t" + it)
     elif (command == "exists"):
         if (args[0] == "-l"):
-            localObj = True
+            local_obj = True
             oname = args[1]
         else:
-            localObj = False
+            local_obj = False
             oname = args[0]
 
-        edgex_obj = edgex_access.edgex_object(edgex_cfg, oname, local_pwd=localObj)
+        edgex_obj = edgex_access.edgex_object(edgex_cfg, oname, local_pwd=local_obj)
         edgex_op = edgex_access.edgex_operation('exists')
         try:
             f = edgex_op.exists(edgex_obj)
@@ -239,13 +297,13 @@ def process_command(command, elog, args=None):
         print(oname + " : " + str(f))
     elif (command == "info"):
         if (args[0] == "-l"):
-            localObj = True
+            local_obj = True
             oname = args[1]
         else:
-            localObj = False
+            local_obj = False
             oname = args[0]
 
-        edgex_obj = edgex_access.edgex_object(edgex_cfg, oname, local_pwd=localObj)
+        edgex_obj = edgex_access.edgex_object(edgex_cfg, oname, local_pwd=local_obj)
         edgex_op = edgex_access.edgex_operation('meta')
         try:
             f = edgex_op.meta(edgex_obj)
@@ -380,7 +438,7 @@ def process_command(command, elog, args=None):
         else:
             s3edgex_test(edgex_cfg, testName="basic")
     else:
-        elog.log_error('CommandError', "Unknown command: " + command)
+        elog.log_error("Unknown command: " + command)
 
 def system_info(debug_level):
     print("python \t\t: " + platform.python_version() + " " + platform.python_implementation() + " " + str(platform.python_build()))
