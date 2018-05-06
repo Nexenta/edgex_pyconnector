@@ -2,7 +2,7 @@ PYTHON=python
 PYDOC=pydoc
 
 MODULE = edgex_access
-VERSION = 0.0.11
+VERSION = 0.0.13
 S3EDGE = s3edge
 SOURCES = src/$(MODULE)/$(MODULE).py
 SETUP = setup.py

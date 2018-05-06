@@ -21,6 +21,10 @@ import edgex_access
 
 cfg_file = expanduser("~") + /.mys3config
 edgex_cfg = edgex_access.edgex_config()
+try:
+	edgex_cfg.load_file(cfg_file)
+except:
+	print(" Error loading " + cfg_file  + " config file")
 
 ```
 
@@ -49,24 +53,42 @@ and checks against the stores to determine which store this object is part of.
 edgex_object parses the URI to determine which bucket this is a prt of
 
 
-### edgex_operation
+### edgex_task
 
-edgex_operation is what is used with an object to retrieve the edgex_object from the 
-store or place it in the store accordingly. 
+edgex_task is a top level object which defines how a task is executed in a 
+threadpool. All main I/O Operations are available as different tasks 
+e.g. edgex_list, edgex_delete, edgex_get, edgex_put
 
-Typical operations are :
-	put, get, del, exists, info
+In addition to I/O operations, some execution can also be done using the 
+threads in this pool 
+
+### edgex_process
+
+This is the main OS "process" object which decides how much memory, thread pools,
+execution paradigm etc. All edgex_tasks are scheduled into the edgex_process and this
+entity decides how to perform the execution . 
 
 Example:
 
+Here is a small example of how a object deletion is performed, and how the 
+delete operation is queued. 
+
 ```python
+
+
+def deleteobj_cb(future_obj):
+    obj = fututure_obj.arg
+    result = future_obj.result()
+    print("Object: " + obj.pathname() + " delete " + str(result))
+   
+def delete_obj(this_process, obj):
+    delete_task = edgex_access.edgex_delete(this_process, obj)
+    this_process.submit_task(delete_task, deleteobj_cb)
 
 del_objname = "aws_s3://mybucket/file_foo.txt"
 del_obj = edgex_access.edgex_object(edgex_cfg, del_objname)
+delete_obj(this_process, del_obj)
 
-# now do the actual delete using the operation
-edgex_op = edgex_access.edgex_operation('delete')
-edgex_op.remove(del_obj)
 
 ```
 
@@ -78,34 +100,57 @@ Here is a small example to whet your appetite
 oname = "mybuk1/high_tech_stocks.txt"
 primary_store = edgex_cfg.get_primary_store()
 remote_edgex_obj = edgex_access.edgex_obj(primary_store, oname)
-exist_op = edgex_access.exged_operaton('exists')
-isthere = edgex_op.exists(remote_edgex_obj)
 
+#
+def existsobj_cb(future_obj):
+    result = future_obj.result()
+    obj = future_obj.arg
+    print(obj.pathname() + "\t:\t" + str(result))
+    return result
+
+def exists_obj(this_process, obj):
+    exists_task = edgex_access.edgex_exists(this_process, obj)
+    this_process.submit_task(exists_task, existsobj_cb)
+
+isthere = exists_obj(this_process, remote_edgex_obj)
 # is_there is True or False
 
 # Let's get the object
-edgex_op_read = edgex_access.edgex_operation('get')
-stock_file_buffer = exdgex_op_read.get(remote_edgex_obj)
-stock_file_name = "high_tech_stocks.txt"
+source_obj = edgex_access.edgex_object(cfg, "aws3://mybuck1/stock_file.txt")
+dest_obj = edgex_access.edgex_object(cfg, "high_tech_stocks.txt", as_is=True)
 
-# decide where to place this file
-dest_obj_name = "aws_s3://mybuck1/stock_file.txt"
-dest_obj = edgex_access.edgex_object(primary_store, dest_objname)
+# this is the callback that is called when the get object is 
+# actually obtained
+def getobj_source_cb(future_obj):
+    result = future_obj.result()
+    source_obj = future_obj.arg
+    this_process = source_obj.ctx
+    dest_obj = source_obj.arg
+    dest_obj.databuf = result
+    put_task = edgex_access.edgex_put(this_process, dest_obj)
+    this_process.submit_task(put_task, getobj_target_cb)
 
-# create a local object representation of the stocks file.
-local_edgex_obj = edgex_access.edgex_obj(home_store, stock_file_name)
+# when the buffer retrieved is now placed into a local file 
+# this callback is called. 
+def getobj_target_cb(future_obj):
+    result = future_obj.result()
+    target_obj = future_obj.arg
 
-# now let's create the operations
+# create a get task and hand it off to the process
+def get_obj(this_process, source_obj, dest_obj):
+    source_obj.arg = dest_obj
+    source_obj.ctx = this_process
+    get_task = edgex_access.edgex_get(this_process, source_obj)
+    this_process.submit_task(get_task, getobj_source_cb)
 
-edgex_op_write = edgex_access.edgex_operation('put')
-edgex_op_read = edgex_access.edgex_operation('get')
 
-# read the buffer and put it
-edgex_op_write.put(dest_obj, edgex_op_read.get(local_edgex_obj))
+# in the example above, we simply have to do this .
+get_obj(this_process, source_obj, dest_obj)
 
 # Let's remove the remote file
-edgex_op_del = edgex_access.edgex_operation('delete')
-edgex_op_del(dest_obj.remove()
+del_objname = "aws_s3://mybucket/file_foo.txt"
+del_obj = edgex_access.edgex_object(edgex_cfg, del_objname)
+delete_obj(this_process, del_obj)
 
 
 ```

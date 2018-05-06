@@ -68,8 +68,8 @@ Commands
                 % s3edgex put [ -r | -l ] <store://bucketname/dirname> <dirname>
                 % s3edgex del <store://bucketname/filename>
                 % s3edgex del [ -r | -l ] <store://bucketname/dirname>
-                % s3edgex info <store://bucketname/filename>
-                % s3edgex exists <store://bucketname/filename>
+                % s3edgex info [ -r | -l ] <store://bucketname/filename>
+                % s3edgex exists [ -r | -l ] <store://bucketname/filename>
 
 Command Options
 ---------------

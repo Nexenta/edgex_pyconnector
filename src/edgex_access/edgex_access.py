@@ -14,12 +14,14 @@ import urllib3
 import urllib.parse as urlparse
 import logging
 import glob
+import random 
 
 # Added because some sites do not need ssl certification and that generates 
 # warnings in the code.  Disable these warnings for now
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 urllib3.disable_warnings(InsecureRequestWarning)    
 
+import time
 from time import mktime, strptime
 from datetime import datetime, timedelta
 from requests_aws4auth import AWS4Auth
@@ -28,10 +30,14 @@ from lxml import etree
 from io import StringIO, BytesIO
 import re
 
+from queue import Queue
 import threading
+from threading import Thread
+import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor, \
         ProcessPoolExecutor, \
         as_completed
+
 
 # ============================================================================
 # internal globals
@@ -42,7 +48,7 @@ EDGEX_ACCESS_LOG_NAME="edgex_access"
 MAX_SINGLE_OBJ=5* 1024 * 1024 * 1024 # 5Gb
 
 # ============================================================================
-# buffer hash comutation
+# buffer hash computation
 
 class edgex_hasher(object):
     """
@@ -299,22 +305,29 @@ class edgex_s3parser(object):
 class edgex_store:
     def __init__(self):
         self.logger = logging.getLogger(EDGEX_ACCESS_LOG_NAME + '.edgex_store')
+        self.islocal_store = False
         
     def fromjson(self, cfg):        
         self.name = cfg['NAME']
         self.type = cfg['STORE_TYPE']
         if (self.type == "FS"):
             self.cwd = os.getcwd()
-        self.default_bucket = cfg['BUCKET']
-        self.bucket = self.default_bucket
+        self.bucket = cfg['BUCKET']
         self.token = cfg['TOKEN']
         self.tag = cfg['TAG']
-        if (self.type != "FS"):
+        if (self.type == "S3"):
             self.access = cfg['ACCESS']
             self.secret = cfg['SECRET']
             self.endpoint = cfg['ENDPOINT']
             self.region = cfg['REGION']
             self.use_ssl = cfg['SSL']
+        elif (self.type == "FS"):
+            self.islocal_store = True 
+        else:
+            raise InvalidStore(self.type)
+
+    def islocal(self):
+        return self.islocal_store
 
     def create(self, name, store_type, bucket, access=None, secret=None,\
             endpoint=None, region=None, token=None, tag=None):
@@ -336,9 +349,7 @@ class edgex_store:
         return self.type
     def get_default_bucket(self):
         return self.bucket
-    def set_local_pwd(self):
-        self.bucket = os.getcwd()
-        self.default_bucket = self.bucket
+
     def list_buckets(self):
         if (self.type == "S3"):
             auth = AWS4Auth(self.access, self.secret, self.region, 's3')
@@ -380,6 +391,7 @@ class edgex_config:
         self.primary = ""
         self.configured = False
         self.syncio = "SYNC"
+
     def configure(self):
         if not self.configured:
             stores = self.cfg_data['stores']
@@ -466,17 +478,115 @@ class edgex_config:
         self.store_dict["local"] = store
         return store
 
+# ===========================================================================
+#
+class edgex_access:
+    def __init__(self):
+        # self.pid
+        self.max_tasks = 8
+        self.valid_taskids = random.sample(range(1,100), self.max_tasks)
+        self.used_taskids = []
 
+        max_workers = self.max_tasks
+        self.texe = concurrent.futures.ThreadPoolExecutor(max_workers)
+        self.jobs = []
+        self.taskq = Queue()
+        self.resultq = Queue()
+
+        self.logger = logging.getLogger(EDGEX_ACCESS_LOG_NAME + '.edgex_access')
+
+    # keep track of the config used to start this process
+    def add_config(self, edgex_cfg):
+        self.cfg = edgex_cfg
+
+    def get_task_id(self):
+        if (len(self.used_taskids) == self.max_tasks):
+            return -1
+        candidate_list = [x for x in self.valid_taskids if x not in self.used_taskids]
+        if (len(candidate_list) == 0):
+            return -1
+        num = random.choice(candidate_list)
+        return num
+
+    def put_task_id(self, taskid):
+        if taskid not in self.used_taskids:
+            return False
+        self.used_tasks.remove(taskid)
+        return True
+
+    def submit_task(self, task, cb):
+        job = self.texe.submit(task.execute, task.obj_arg)
+        job.arg = task.obj_arg
+        task.done_callback(cb)
+        job.add_done_callback(task.complete)
+        self.jobs.append(job)
+
+    def check_jobs(self):
+        self.logger.debug("process: job check")
+        for fjs in concurrent.futures.as_completed(self.jobs):
+            mobj = fjs.arg
+            if fjs.cancelled():
+                self.logger.debug("Cancelled: " + mobj.pathname())
+            elif fjs.done():
+                try:
+                    error = fjs.exception()
+                    if error:
+                        self.logger.error("Unexpected Error: " + mobj.pathname() + " Error : " + str(error))
+                except Exception as exc:
+                    self.logger.error("Unexpected Error: " + str(sys.exc_info()[0]) + "\t" + str(sys.exc_info()[1]))
+                    self.logger.error("Exception : " + str(exc.__class__) + "\t" + str(exc.__doc__))
+            self.jobs.remove(fjs)
+        return len(self.jobs)
+
+    def wait_tasks(self, timeout):
+        finished, pending = concurrent.futures.wait(self.jobs, timeout=timeout, return_when=concurrent.futures.ALL_COMPLETED)
+        return len(pending)
+
+    def shutdown(self):
+        self.logger.debug("shutdown job count : " + str(len(self.jobs)))
+        for fjs in self.jobs:
+            mobj = fjs.arg
+            if fjs.running():
+                self.logger.error("shutdown cancel : " + mobj.pathname())
+                fjs.cancel()
+            elif fjs.done():
+                self.logger.debug("shutdown done : " + mobj.pathname())
+        self.texe.shutdown()
+        self.logger.debug("shutdown done")
+
+    def loop(self):
+        retry = 0
+        while True:
+            # TODO: which one or both ? 
+            with self.texe as executor:
+                retry = self.check_jobs()
+            retry = self.wait_tasks(1)
+            if (retry == 0):
+                break
+            self.logger.debug("Pending tasks: " + str(retry))
+        self.shutdown()
 # ===========================================================================
 # edgex_object
 # 
 class edgex_object:
-    def __init__(self, cfg, name, store=None, local_pwd=False):
+    def __init__(self, cfg, name, store=None, as_is=False):
         self.oname = name
-        self.logger = logging.getLogger(EDGEX_ACCESS_LOG_NAME + '.edgex_obj')
+        # time for the creation of this in-memory object
         t = datetime.utcnow()
         self.amzdate = t.strftime('%Y%m%dT%H%M%SZ')
         self.datestamp = t.strftime('%Y%m%d') # Date w/o time, used in credential scope
+        # contains the databuffer on one task only. .. not the entire content-length. 
+        self.databuf = None
+        # used only to pass around in callbacks etc
+        self.arg = None
+        self.ctx = None
+        self.logger = logging.getLogger(EDGEX_ACCESS_LOG_NAME + '.edgex_obj')
+
+        if (self.in_memory(cfg, name) is True):
+            return
+
+        if (self.localpath(cfg, name, as_is) is True):
+            return
 
         if store is None:
             is_store = False
@@ -489,12 +599,7 @@ class edgex_object:
             if is_store is False:
                 store = cfg.get_store(sname[0])
                 if store is None:
-                    if local_pwd is False:
-                        self.logger.error("Error: " + self.oname)
-                        raise InvalidStore(sname[0] + ": Store not found")
-                    else:
-                        store = cfg.get_local_pwd()
-                        is_store=True
+                    raise InvalidStore("Store not defined: " + sname[0])
                 else:
                     is_store=True
 
@@ -506,23 +611,16 @@ class edgex_object:
             if is_store is False:
                 store = cfg.get_store(sname[0])
                 if store is None:
-                    if local_pwd is False:
-                        self.logger.error("Error: " + self.oname)
-                        raise InvalidStore(sname[0] + ": Store not found")
-                    else:
-                        store = cfg.get_local_pwd()
-                        is_store=True
+                    raise InvalidStore("Store not defined: " + str(sname[0]))
                 else:
                     is_store=True
 
             if (sname[0].startswith('//')):
-                bpath = re.sub('//', '/',sname_1[0])
+                bpath = re.sub('//', '/',sname[0])
             else:
                 bpath = self.oname
         else:
-            if local_pwd:
-                store = cfg.get_local_pwd()
-                is_store=True
+            raise InvalidStore("Store not defined: " + sname[0])
         #
         if is_store is False:
             raise InvalidStore("No store defined: " + name)
@@ -536,6 +634,8 @@ class edgex_object:
         if (self.store.get_type() == "FS"):
             if os.path.isdir(self.oname):
                 self.isfolder = True
+                if (not self.oname.endswith("/")):
+                    self.oname += "/"
             if os.path.isfile(self.oname):
                 self.islocal = True
 
@@ -548,45 +648,58 @@ class edgex_object:
             self.bucket_name = bname[1]
             self.obj_name = "/".join(bname[2:])
         else:
-            if local_pwd is False:
-                self.logger.error("Error: " + bpath)
-                raise InvalidStore(name + ": Store not found")
-            else:
-                store = cfg.get_local_pwd()
-                self.obj_name = bpath
-
-        if ((self.store.type == "FS") and (local_pwd == True)):
-            self.bucket_name = os.getcwd()
-            self.obj_name = bpath
+            raise InvalidStore(name + ": Store not found")
 
         if len(self.bucket_name) == 0:
-            self.logger.error("No Bucket name")
+            self.logger.debug("No Bucket name")
 
         self.logger.info("OBJECT : " + self.pathname())
 
+    # checks in initialization
+    def in_memory(self, cfg, name):
+        if (name  == "0xdeadbeef"):
+            self.obj_name = name
+            self.bucket_name = "0xdeadbeef"
+            self.store = cfg.get_local_pwd()
+            self.isfolder = False
+            return True
+        else:
+            return False
+
+    def localpath(self, cfg, name, as_is):
+        if (as_is is True):
+            #self.obj_name = os.path.abspath(name)
+            self.obj_name = name
+            self.bucket_name = os.getcwd()
+            self.store = cfg.get_local_pwd()
+            self.isfolder = True if os.path.isdir(name) else False
+            return True
+        else:
+            return False
+
+    # Properties of the object
+    # 
     def get_store(self):
         return self.store
     def store_type(self):
         return self.store.type
-
+    def islocal(self):
+        if (self.store.type == "FS"):
+            return True
+        else:
+            return False
     def bucketname(self):
         return self.bucket_name
     def objname(self):
         return self.obj_name
 
-    def auth(self):
-        auth = AWS4Auth(self.store.access, self.store.secret, self.store.region, 's3')
-        return auth
-
     # return only the storename://bucketname of this object
-    #
     def basename(self):
         if (self.store.get_name() != "local"):
             fpath = self.store.get_name() + "://" + self.bucket_name + "/" 
         else:
             fpath = self.store.get_name() + ":/" + self.bucket_name + "/" 
         return fpath
-
     def stat(self, create=False):
         if (self.store_type() == "FS"):
             file_found = os.path.exists(self.pathname())
@@ -598,38 +711,94 @@ class edgex_object:
         else:
             self.logger.error("Error: No stat on store_type: " + self.store_type())
             raise InvalidStore(str(sef.store_type()))
-
     def pathname(self):
         if (self.store_type() == "FS"):
-            if self.bucket_name and self.obj_name :
-                fpath = self.bucket_name + "/" + self.obj_name
-            else:
-                fpath = self.store.default_bucket + "/" + self.obj_name
+            fpath = self.bucket_name + "/" + self.obj_name
         elif (self.store_type() == "S3"):
-            if self.bucket_name and self.obj_name :
-                fpath = self.store.endpoint + "/" + self.bucket_name + "/" + self.obj_name
-            else:
-                fpath = self.store.default_bucket
+            fpath = self.store.endpoint + "/" + self.bucket_name + "/" + self.obj_name
         else:
             self.logger.error("Error: store_type: " + self.store_type())
             raise InvalidStore(str(sef.store_type()))
         return fpath
+
+    # security  needed to access the object 
+    #
+    def auth(self):
+        auth = AWS4Auth(self.store.access, self.store.secret, self.store.region, 's3')
+        return auth
 # ============================================================================
-# edgex_operations
 #
-valid_ops = [ "list", "get", "put", "meta", "exists", "delete" ]
-class edgex_operation:
-    def __init__(self, opname):
-        found=False
-        for op in valid_ops:
-            if (opname.lower() == op.lower()):
+#
+valid_tasks = [ "list", "get", "put", "info", "exists", "delete", "execute" , "terminate" ]
+class edgex_task:
+    taskid = 0
+    taskname = ""
+    taskstate = None
+    process = None
+    obj_arg = None
+
+    @classmethod
+    def __init__(cls, process, taskname):
+        found = False
+        for op in valid_tasks:
+            if (taskname.lower() == op.lower()):
                 found = True
         if not found:
-            raise InvalidCommand(opname)
-        self.opname = opname
-        self.logger = logging.getLogger(EDGEX_ACCESS_LOG_NAME + '.edgex_objname')
+            raise InvalidCommand(taskname)
+        cls.process = process
+        cls.taskid = process.get_task_id()
+        cls.taskname = taskname
+        cls.logger = logging.getLogger(EDGEX_ACCESS_LOG_NAME + '.edgex_task:' + cls.taskname)
+        cls.logger.debug("task " + cls.taskname + " : " + str(cls.taskid) + " init")
+        cls.taskstate = "init"
 
-    def list(self, obj):
+    @classmethod
+    def done_callback(cls, cb):
+        cls.cb = cb
+
+    @classmethod
+    def complete(cls, ret_obj):
+        cls.logger.debug("task " + cls.taskname + " : " + str(cls.taskid) + " completed")
+        cls.process.put_task_id(cls.taskid)
+        cls.taskstate = "done"
+        return cls.cb(ret_obj)
+
+    @classmethod
+    def execute(cls, obj):
+        cls.logger.debug("task " + cls.taskname + " execute")
+        cls.taskstate = "exec"
+    
+class edgex_terminate(edgex_task):
+
+    def __init__(cls, process, obj):
+        edgex_task(process, "terminate")
+        cls.obj_arg = obj
+
+    @classmethod
+    def execute(cls, obj):
+        super().execute(obj)
+        cls.logger.info("exec terminate " + obj.pathname())
+        if obj.databuf:
+            time.sleep(obj.databuf)
+        return obj.databuf
+
+    @classmethod
+    def complete(cls, ret_obj):
+        cls.logger.info("complete terminate")
+        return super().complete(ret_obj)
+
+
+
+class edgex_list(edgex_task):
+
+    def __init__(cls, process, obj):
+        edgex_task(process, "list")
+        cls.obj_arg = obj
+
+    @classmethod
+    def execute(cls, obj):
+        super().execute(obj)
+        cls.logger.info("exec list: " + obj.pathname())
         final_list = []
         if (obj.store_type() == "FS"):
             if obj.isfolder:
@@ -645,11 +814,7 @@ class edgex_operation:
             return final_list
         elif (obj.store_type() == "S3"):
             if not obj.isfolder:
-                # for a single object , check if it is there 
-                # and return only the object
-                isthere = self.exists(obj)
-                if isthere:
-                    final_list.append(obj.pathname())
+                final_list.append(obj.pathname())
             else:
                 # in case we received no bucketname and no object name
                 if not obj.bucket_name and not obj.obj_name:
@@ -673,20 +838,71 @@ class edgex_operation:
                             final_list.append(mdir)
                         return final_list
                     else:
-                        self.logger.error("Unable to parse:")
-                        self.logger.error(response.text)
-                        self.logger.error(objname + "\t\t" + response.headers['Content-Length'] + "\t\t" + response.headers['Last-Modified'])
+                        cls.logger.error("Unable to parse:")
+                        cls.logger.error(response.text)
+                        cls.logger.error(objname + "\t\t" + response.headers['Content-Length'] + "\t\t" + response.headers['Last-Modified'])
                 except requests.exceptions.RequestException as e:
-                    self.logger.error(str(e))
+                    cls.logger.error(str(e))
                     raise e
                 except Exception as e:
-                    self.logger.error(str(e))
+                    cls.logger.error(str(e))
                     raise e
             return final_list
         else:
             raise InvalidStore(obj.store_type())
 
-    def exists(self, obj):
+    @classmethod
+    def complete(cls, ret_obj):
+        cls.logger.info("complete list")
+        return super().complete(ret_obj)
+
+class edgex_info(edgex_task):
+
+    def __init__(cls, process, obj):
+        edgex_task(process, "info")
+        cls.obj_arg = obj
+
+    @classmethod
+    def execute(cls, obj):
+        super().execute(obj)
+        if (obj.store.type == "FS"):
+            metadata = { obj.pathname():os.stat(obj.pathname()) }
+            return metadata
+        elif (obj.store.type == "S3"):
+            url = obj.store.endpoint + "/" + obj.bucket_name + "/" + obj.obj_name
+            try:
+                response =  requests.head(url, auth=obj.auth(), verify=False)
+                if (response.status_code != 200) or (not response.ok):
+                    cls.logger.error("HEAD " + url + " " + str(response.status_code))
+                    raise HTTPErrorCode(str(response.status_code) + " : " + str(response.text))
+                else:
+                    cls.logger.debug("HEAD " + url + " " + str(response.status_code))
+                    return response.headers
+            except requests.exceptions.RequestException as e:
+                cls.logger.error(str(e))
+                raise e
+            except Exception as e:
+                cls.logger.error(str(e))
+                raise e
+        else:
+            raise InvalidStore(obj.store_type())
+
+    @classmethod
+    def complete(cls, ret_obj):
+        cls.logger.info("complete info")
+        return super().complete(ret_obj)
+
+
+class edgex_exists(edgex_task):
+
+    def __init__(cls, process, obj):
+        edgex_task(process, "exists")
+        cls.obj_arg = obj
+
+    @classmethod
+    def execute(cls, obj):
+        super().execute(obj)
+        cls.logger.info("exec exists")
         if (obj.store.type == "FS"):
             return os.path.exists(obj.pathname())
         elif (obj.store.type == "S3"):
@@ -694,126 +910,42 @@ class edgex_operation:
             try:
                 response =  requests.head(url, auth=obj.auth(), verify=False)
                 if response.status_code != 200 or (not response.ok):
-                    self.logger.error("HEAD " + url + " " + str(response.status_code))
-                    self.logger.error(response.text)
+                    cls.logger.error("HEAD " + url + " " + str(response.status_code))
+                    cls.logger.error(response.text)
                     #s3err = edgex_s3error(response) 
                     #self.logger.error(s3err.error_text())
                     return False
                 else:
-                    self.logger.debug("HEAD " + url + " " + str(response.status_code))
+                    cls.logger.debug("HEAD " + url + " " + str(response.status_code))
                     return True
             except requests.exceptions.RequestException as e:
-                self.logger.error(str(e))
+                cls.logger.error(str(e))
             except Exception as e:
-                self.logger.error(str(e))
+                cls.logger.error(str(e))
             return False
         else:
             raise InvalidStore(obj.store_type())
 
-    def meta(self, obj):
-        if (obj.store.type == "FS"):
-            metadata = { f:os.stat(f) for f in glob.glob('*') }
-            return metadata
-        elif (obj.store.type == "S3"):
-            url = obj.store.endpoint + "/" + obj.bucket_name + "/" + obj.obj_name
-            try:
-                response =  requests.head(url, auth=obj.auth(), verify=False)
-                if (response.status_code != 200) or (not response.ok):
-                    self.logger.error("HEAD " + url + " " + str(response.status_code))
-                    raise HTTPErrorCode(str(response.status_code) + " : " + str(response.text))
-                else:
-                    self.logger.debug("HEAD " + url + " " + str(response.status_code))
-                    return response.headers
-            except requests.exceptions.RequestException as e:
-                self.logger.error(str(e))
-                raise e
-            except Exception as e:
-                self.logger.error(str(e))
-                raise e
-        else:
-            raise InvalidStore(obj.store_type())
+    @classmethod
+    def complete(cls, ret_obj):
+        cls.logger.info("complete exists")
+        return super().complete(ret_obj)
 
-    def get(self, obj):
-        if (obj.store.type == "FS"):
-            file_size = os.stat(obj.pathname()).st_size
-            if (file_size > MAX_SINGLE_OBJ):
-                self.logger.error('MaxObjectSize', objtype)
-                raise
-            file_data = io.open(obj.pathname(), mode='rb')
-            fdata_now = file_data.read(file_size)
-            return fdata_now
-        elif (obj.store.type == "S3"):
-            url = obj.store.endpoint + "/" + obj.bucket_name + "/" + obj.obj_name
-            try:
-                response =  requests.get(url, auth=obj.auth(), verify=False)
-                if (response.status_code != 200) or (not response.ok):
-                    self.logger.error("GET " + url + " " + str(response.status_code))
-                    self.logger.error("File: " + fileName)
-                    s3err = edgex_s3error(response) 
-                    self.logger.error(s3err.error_text())
-                    raise HTTPErrorCode(str(response.status_code) + " : " + str(response.text))
-                elif (response.status_code == 200) and (response.ok):
-                    self.logger.debug("GET " + url + " " + str(response.status_code))
-                    return response.content
-                else:
-                    raise HTTPErrorCode(str(response.status_code) + " : " + str(response.text))
-            except requests.exceptions.RequestException as e:
-                self.logger.error(str(e))
-                raise e
-            except Exception as e:
-                self.logger.error(str(e))
-                raise e
-        else:
-            raise InvalidStore(obj.store_type())
+# TODO: return True or False
+class edgex_delete(edgex_task):
 
-    # TODO: move databuf as a field inside obj 
-    def put(self, obj, databuf):
-        if (obj.store.type == "FS"):
-            if not os.path.exists(os.path.dirname(obj.pathname())):
-                try:
-                    os.makedirs(os.path.dirname(obj.pathname()))
-                except OSError as exc:
-                    if exc.errno != errno.EEXIST:
-                        raise
-            open(obj.pathname(), 'wb').write(databuf)
-            return
-        elif (obj.store.type == "S3"):
-            url = obj.store.endpoint + "/" + obj.bucket_name + "/" + obj.obj_name
-            databuf_size = len(databuf)
-            metaonheader = {}
-            metaonheader['Content-Type'] = 'application/octet-stream'
-            headers = {
-                'Content-Length': str(databuf_size),
-            }
-            headers.update(metaonheader)
-            sha256_hex = edgex_hasher.sha256(databuf).hexdigest()
-            try:
-                response = requests.put(url, data=databuf, headers=headers, auth=obj.auth(), verify=False)
-                if response.status_code == 200:
-                    if response.ok:
-                        self.logger.debug("PUT " + url + " " + str(response.status_code))
-                        return
-                    else:
-                        self.logger.error("PUT " + url + " " + str(response.status_code))
-                        raise HTTPErrorCode(str(response.status_code) + " : " + str(response.text))
-                else:
-                    s3err = edgex_s3error(response) 
-                    self.logger.error(s3err.error_text())
-                    raise HTTPErrorCode(str(response.status_code) + " : " + str(response.text))
-            except requests.exceptions.RequestException as e:
-                self.logger.error(str(e))
-                raise e
-            except Exception as e:
-                self.logger.error(str(e))
-                raise e
-        else:
-            raise InvalidStore(obj.store_type())
+    def __init__(cls, process, obj):
+        edgex_task(process, "delete")
+        cls.obj_arg = obj
 
-    def remove(self, obj):
+    @classmethod
+    def execute(cls, obj):
+        super().execute(obj)
+        cls.logger.info("exec delete " + obj.pathname())
         if (obj.store.type == "FS"):
             if os.path.isfile(obj.pathname()):
                 os.remove(obj.pathname())
-                return
+                return True
             if os.path.isdir(obj.pathname()):
                 dentries = os.listdir(obj.pathname())
                 if (len(dentries) == 0):
@@ -824,27 +956,154 @@ class edgex_operation:
                 response =  requests.delete(url, auth=obj.auth(), verify=False)
                 if response.status_code == 200 or response.status_code == 204:
                     if response.ok:
-                        self.logger.debug("DELETE " + url + " " + str(response.status_code))
-                        return
+                        cls.logger.debug("DELETE " + url + " " + str(response.status_code))
+                        return True
                     else:
-                        self.logger.error("DELETE " + url + " " + str(response.status_code))
+                        cls.logger.error("DELETE " + url + " " + str(response.status_code))
                         raise HTTPErrorCode(str(response.status_code) + " : " + str(response.text))
                 else:
-                    self.logger.error("DELETE " + url + " " + str(response.status_code))
+                    cls.logger.error("DELETE " + url + " " + str(response.status_code))
                     s3err = edgex_s3error(response) 
                     if s3err.error_code() == 'NoSuchKey':
-                        return
+                        return False
                     else:
-                        self.logger.error(s3err.error_text())
+                        cls.logger.error(s3err.error_text())
                         raise requests.HTTPError(response.text)
             except requests.exceptions.RequestException as e:
-                self.logger.error(str(e))
+                cls.logger.error(str(e))
                 raise e
             except Exception as e:
-                self.logger.error(str(e))
+                cls.logger.error(str(e))
                 raise e
         else:
             raise InvalidStore(obj.store_type())
+
+    @classmethod
+    def complete(cls, ret_obj):
+        cls.logger.info("complete delete")
+        return super().complete(ret_obj)
+
+
+class edgex_get(edgex_task):
+
+    def __init__(cls, process, obj):
+        edgex_task(process, "get")
+        cls.obj_arg = obj
+
+    @classmethod
+    def execute(cls, obj):
+        super().execute(obj)
+        cls.logger.info("exec get " + obj.pathname())
+        if (obj.store.type == "FS"):
+            file_size = os.stat(obj.pathname()).st_size
+            if (file_size > MAX_SINGLE_OBJ):
+                cls.logger.error('MaxObjectSize', objtype)
+                raise
+            file_data = io.open(obj.pathname(), mode='rb')
+            fdata_now = file_data.read(file_size)
+            return fdata_now
+        elif (obj.store.type == "S3"):
+            url = obj.store.endpoint + "/" + obj.bucket_name + "/" + obj.obj_name
+            try:
+                response =  requests.get(url, auth=obj.auth(), verify=False)
+                if (response.status_code != 200) or (not response.ok):
+                    cls.logger.error("GET " + url + " " + str(response.status_code))
+                    s3err = edgex_s3error(response) 
+                    cls.logger.error(s3err.error_text())
+                    raise HTTPErrorCode(str(response.status_code) + " : " + str(response.text))
+                elif (response.status_code == 200) and (response.ok):
+                    cls.logger.debug("GET " + url + " " + str(response.status_code))
+                    return response.content
+                else:
+                    raise HTTPErrorCode(str(response.status_code) + " : " + str(response.text))
+            except requests.exceptions.RequestException as e:
+                cls.logger.error(str(e))
+                raise e
+            except Exception as e:
+                cls.logger.error(str(e))
+                raise e
+        else:
+            raise InvalidStore(obj.store_type())
+
+    @classmethod
+    def complete(cls, ret_obj):
+        cls.logger.info("complete get")
+        return super().complete(ret_obj)
+
+
+class edgex_put(edgex_task):
+
+    def __init__(cls, process, obj):
+        edgex_task(process, "put")
+        cls.obj_arg = obj
+
+    @classmethod
+    def execute(cls, obj):
+        super().execute(obj)
+        cls.logger.info("exec put " + obj.pathname())
+        if (obj.store.type == "FS"):
+            if not os.path.exists(os.path.dirname(obj.pathname())):
+                try:
+                    os.makedirs(os.path.dirname(obj.pathname()))
+                except OSError as exc:
+                    if exc.errno != errno.EEXIST:
+                        raise
+            open(obj.pathname(), 'wb').write(obj.databuf)
+            return
+        elif (obj.store.type == "S3"):
+            url = obj.store.endpoint + "/" + obj.bucket_name + "/" + obj.obj_name
+            databuf_size = len(obj.databuf)
+            metaonheader = {}
+            metaonheader['Content-Type'] = 'application/octet-stream'
+            headers = {
+                'Content-Length': str(databuf_size),
+            }
+            headers.update(metaonheader)
+            sha256_hex = edgex_hasher.sha256(obj.databuf).hexdigest()
+            try:
+                response = requests.put(url, data=obj.databuf, headers=headers, auth=obj.auth(), verify=False)
+                if response.status_code == 200:
+                    if response.ok:
+                        cls.logger.debug("PUT " + url + " " + str(response.status_code))
+                        return
+                    else:
+                        cls.logger.error("PUT " + url + " " + str(response.status_code))
+                        raise HTTPErrorCode(str(response.status_code) + " : " + str(response.text))
+                else:
+                    s3err = edgex_s3error(response) 
+                    cls.logger.error(s3err.error_text())
+                    raise HTTPErrorCode(str(response.status_code) + " : " + str(response.text))
+            except requests.exceptions.RequestException as e:
+                cls.logger.error(str(e))
+                raise e
+            except Exception as e:
+                cls.logger.error(str(e))
+                raise e
+        else:
+            raise InvalidStore(obj.store_type())
+
+    @classmethod
+    def complete(cls, ret_obj):
+        cls.logger.debug("complete put")
+        return super().complete(ret_obj)
+
+class edgex_execute(edgex_task):
+
+    def __init__(cls, process, obj):
+        edgex_task(process, "execute")
+        cls.obj_arg = obj
+
+    @classmethod
+    def execute(cls, obj):
+        super().execute(obj)
+        cls.logger.info("exec execute " + obj.pathname())
+        return "NO_FUNC_IN_OBJ"
+
+    @classmethod
+    def complete(cls, ret_obj):
+        cls.logger.info("complete execute")
+        return super().complete(ret_obj)
+
 
 if __name__ == "__main__":
     pass
