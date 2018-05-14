@@ -323,6 +323,7 @@ def getobj_target_cb(future_obj):
 def get_obj(this_process, source_obj, dest_obj):
     source_obj.arg = dest_obj
     source_obj.ctx = this_process
+    print("source: " + source_obj.pathname() + "\tdestination: " + dest_obj.pathname())
     get_task = edgex_access.edgex_get(this_process, source_obj)
     this_process.submit_task(get_task, getobj_source_cb)
 
@@ -477,6 +478,8 @@ def cmd_parse_2(cfg, elog, args):
         first_obj = edgex_access.edgex_object(cfg, first_objname)
         if local_obj:
             store = cfg.get_local_pwd()
+        else:
+            store = None
         second_obj = edgex_access.edgex_object(cfg, second_objname, store=store, as_is=local_obj)
         return recursive, [first_obj, second_obj]
     except Exception as e:
@@ -571,6 +574,8 @@ def cmd_test(this_process, elog, args=None):
         s3edgex_test(cfg, test_name="basic")
 
 def process_command(command, elog, args=None):
+    """ Process the command supplied in the command line """
+
     cfg_file = expanduser("~") + DEFAULT_CONFIG 
     if (command == "setup"):
         s3edgex_setup(args)
@@ -614,16 +619,20 @@ def process_command(command, elog, args=None):
         terminate(this_process, 4)
         this_process.loop()
 
-    except:
-        print("Unexpected Error: ", sys.exc_info()[0], "\t", sys.exc_info()[1])
+    except Exception as e:
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        print("Unexpected Error: ", exc_type, fname, exc_tb.tb_lineno)
 
 def system_info(debug_level):
+    """ Find the system informations details like, python, memory, release versions etc """
     print("python \t\t: " + platform.python_version() + " " + platform.python_implementation() + " " + str(platform.python_build()))
     print("platform \t: " + platform.node() + " " + platform.system() + " " + platform.machine() + " " + platform.release())
     print("uname \t\t: " + platform.uname().version)
     print("debug_level \t: " + str(debug_level))
 
 def usage():
+    """ Describe the usage of s3edgex """
     print(sys.argv[0] + " --help")
     print(sys.argv[0] + " --system")
     print(sys.argv[0] + " [ --debug <level> ] <command> <objname> <arg>")
@@ -652,6 +661,7 @@ def usage():
     print("\t% " + sys.argv[0] + " exists <store://bucketname/filename>")
 
 def main():
+    """ Main entry for the s3edgex command line """
     if sys.version_info[0] < 3:
         raise "Must be using Python 3 "
     debug_level = 4

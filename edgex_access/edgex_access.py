@@ -30,6 +30,10 @@ from lxml import etree
 from io import StringIO, BytesIO
 import re
 
+
+#
+# Following was added when threading was introduced here
+#
 from queue import Queue
 import threading
 from threading import Thread
@@ -37,7 +41,16 @@ import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor, \
         ProcessPoolExecutor, \
         as_completed
+# ============================================================================
 
+"""
+.. module:: edgex_access
+    :platform: OS X, Ubuntu
+    :synopsis: module that enables S3 protocol access for I/O
+
+.. moduleauthor:: Nexenta Systems
+
+"""
 
 # ============================================================================
 # internal globals
@@ -46,14 +59,16 @@ DEFAULT_ENDPOINT="edge.nexenta.com"
 DEFAULT_REGION="us-west-1"
 EDGEX_ACCESS_LOG_NAME="edgex_access"
 MAX_SINGLE_OBJ=5* 1024 * 1024 * 1024 # 5Gb
-
 # ============================================================================
+
 # buffer hash computation
 
 class edgex_hasher(object):
-    """
-    Adaptation of hashlib-based hash functions that return unicode-encoded hex- and base64-digest
-    strings.
+    """ Class that performs the hashlib-based hash calculations
+    .. note :: This class is a set of helper methods around 
+               the real methods that compute the hash 
+               Adaptation of hashlib-based hash functions that 
+               return unicode-encoded hex- and base64-digest strings.
     """
     def __init__(self, data, h):
         if data is None:
@@ -84,10 +99,17 @@ class edgex_hasher(object):
 logger_level = { 0 : logging.DEBUG, 1 : logging.INFO, 2 : logging.WARNING, 3 : logging.ERROR, 4 : logging.CRITICAL }
 
 class edgex_logger:
-    """
-    edgex_logger : create a log for edgex module debugging and errors
+    """ Class that allows for logging and creating logs 
+    .. note :: set of methods to do logging based on the 
+               log level specified.
+               logging can do logging based on the module
     """
     def __init__(self, debug_level, logFile):
+        """ logger initialization method
+        Args:
+            debug_level; log level
+            logFile: name of the file to send logs to 
+        """
         file_format='[%(asctime)s] {%(filename)s:%(lineno)d} %(levelname)s - %(message)s'
         if (debug_level >= 4):
             return
@@ -551,7 +573,7 @@ class edgex_access:
                 fjs.cancel()
             elif fjs.done():
                 self.logger.debug("shutdown done : " + mobj.pathname())
-        self.texe.shutdown()
+        self.texe.shutdown(wait=True)
         self.logger.debug("shutdown done")
 
     def loop(self):

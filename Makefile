@@ -1,15 +1,14 @@
 PYTHON=python
-PYDOC=pydoc
 
 MODULE = edgex_access
 VERSION = 0.0.13
 S3EDGE = s3edge
-SOURCES = src/$(MODULE)/$(MODULE).py
+SOURCES = $(MODULE)/$(MODULE).py
 SETUP = setup.py
-DOCS = docs/$(MODULE).txt docs/s3edgex.txt
+DOCS = docs/source/$(MODULE).rst docs/source/s3edgex.rst
 SCRIPTS = s3edgex/s3edgex
 READMES = README.md LICENSE docs/edgex_access.rst docs/s3edgex.rst
-TESTS = test/test_$(MODULE).py
+TESTS = test/test_ea.py
 REQ = requirements.txt
 DISTDIR = dist 
 
@@ -24,8 +23,11 @@ show:
 	done | sort -u
 
 clean:
-	rm -rf src/$(MODULE).egg-info
+	rm -rf $(MODULE).egg-info
 	rm -rf dist build
+	rm -rf __pycache__
+	make -C docs clean
+
 
 req:
 	pip freeze > $(REQ)
@@ -51,8 +53,5 @@ uninstall:
 register: $(SETUP) 
 	echo "twine upload dist/*"
 
-docs/$(MODULE).txt: src/$(MODULE)/$(MODULE).py
-	echo "TODO pydoc"
-
-docs/$(S3EDGE).txt : $(S3EDGE)/$(S3EDGE)
-	echo "TODO pydoc"
+docs: $(DOCS)
+	make -C docs html

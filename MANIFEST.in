@@ -1,5 +1,5 @@
+include *.md
 include LICENSE
-include README.rst
 
 # Don't package GitHub-specific files.
 exclude *.md .travis.yml

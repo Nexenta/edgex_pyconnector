@@ -1,5 +1,11 @@
-s3edgex: command line for S3 Store access
-------------------------------------------
+s3edgex
+========
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Contents:
+
+   modules
 
 What is it ?
 ------------

@@ -37,42 +37,39 @@ Doing stuff
 -----------
 .. code-block:: python
 
-    # firt get a this_process object
-    this_process = edgex_access.edgex_access()
-
     # name of the primary service in the config 
     # there can only be one primary 
-    store_name = edgex_cfg.get_primary_store()
+    store_name = edgex_cfg.getPrimaryService()
      
-    # Find the access to the store based on the name
-    edgex_store = edgex_cfg.get_store(edgex_cfg)
+    # Find the access to the store based on the config
+    edgex_store = edgex_access.edgex_store_access(edgex_cfg)
 
     # list the buckets in the primary
-    edgex_store.list_buckets()
+    # decide if you want to go down the hierarchy recursively
+    recursive = False
+    edgex_store.list_buckets(recursive)
 
-    # Let's write an object remotely
-    source_obj = edgex_access.edgex_object(cfg, "foofile", as_is=True)
-    dest_obj = edgex_access.edgex_object(cfg, "aws3://mybucket/foofile")
+    # Let's write an object 
+    # get an object that references I/O functions first 
+    edgex_obj = edgex_access.edgex_obj_access(edgex_cfg)
 
     # now do a PUT ising this
-    put_obj(this_process, source_obj, dest_obj)
-
+    remoteName="mybucket/foofile"
+    localFile="foofile"
+    edgex_obj.put_obj(remoteName, fileName=localFile)
 
 API
 ====
 
 Primary API in edgex_access module is in these objects:
 
-edgex_access
 edgex_config
 edgex_store
 edgex_object
-edgex_task 
-
+edgex_task
 
 edgex_access
-        - Create the primary process for scheduling all the tasks for doing I/O 
-          to any store
+        - Access S3 stores using the AWS S3 protocol 
 
 edgex_config
         - Describe the confguration for all the S3 stores and Local Store load_file
@@ -91,33 +88,36 @@ edgex_object
           Each string representation must have the store name or it is assumed to be
           picked up from the local present working directory if the flag is provided
 
-        Example:
+Example
+-------
+.. code-block:: python
 
-```python
+   objname = "aws_s3://mybucket"
+   obj = edgex_access.edgex_object(edgex_cfg, objname)
+   print("URI : " + obj.pathname())
+   print("Bucket : " + obj.bucketname())
+   print("Object : " + obj.objname())
 
-objname = "aws_s3://mybucket"
-obj = edgex_access.edgex_object(edgex_cfg, objname)
-print("URI : " + obj.pathname())
-print("Bucket : " + obj.bucketname())
-print("Object : " + obj.objname())
 
-```
+edgex_operation
+        - Do the I/O operations using these methods, and the object supplied
+        - Does the I/O based on the store type to determine how to do the I/O
 
-edgex_task
-        - Do any I/O operations using these methods implemented using this object
-        - edgex_access is the primary process that shcedues these tasks
+        Available methods:
 
-        Derived classes:
-
-        edgex_get
+        get
                 - Retrieve the buffer for this object 
-        edgex_put
+        read
+                - Same as get
+        put
                 - Place a buffer into this object 
-        edgex_del
+        write
+                - Same as put
+        remove
                 - Delete this object from the store
-        edgex_exists
+        exists
                 - Check if the object actually exists or not
-        edgex_info
+        info
                 - Determine the meta only for this object
 
 
