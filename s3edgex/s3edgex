@@ -167,7 +167,7 @@ def terminate(this_process, wait_time):
     end_obj.ctx = this_process
     terminate_task = edgex_access.edgex_terminate(this_process, end_obj)
     this_process.submit_task(terminate_task, end_cb)
-
+# ==========================================================================
 
 def listobj_cb(future_obj):
     result = future_obj.result()

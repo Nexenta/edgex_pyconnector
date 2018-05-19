@@ -39,7 +39,7 @@ Doing stuff
 
     # name of the primary service in the config 
     # there can only be one primary 
-    store_name = edgex_cfg.getPrimaryService()
+    edgex_store = edgex_cfg.get_primary_store()
      
     # Find the access to the store based on the config
     edgex_store = edgex_access.edgex_store_access(edgex_cfg)
