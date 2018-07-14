@@ -54,7 +54,7 @@ setup(
     keywords='requests edgex_access s3 scaleout store distributed',
     packages=['edgex_access'],
     python_requires = '>=3',
-    install_requires = [ 'urllib3', 'requests_aws4auth', 'requests' , 'simplejson', 'lxml', 'futures'],
+    install_requires = [ 'urllib3', 'requests_aws4auth', 'aiobotocore' , 'simplejson', 'lxml', 'asyncio'],
     project_urls= {
         'Bug Reports': 'https://github.com/Nexenta/edgex_pyconnector/issues',
         'Source': 'https://github.com/Nexenta/edgex_pyconnector/',

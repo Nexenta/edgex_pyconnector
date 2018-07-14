@@ -25,12 +25,12 @@ Loading a S3 configuration
 
 .. code-block:: python
 
-   import edgex_access
+   from edgex_access import edgex_config
 
    # This is how to load up the configuration 
    #
    cfg_file = expanduser("~") + "/.edgex_config"
-   edgex_cfg = edgex_access.edgex_config()
+   edgex_cfg = edgex_config()
    edgex_cfg.load_file(cfg_file)
 
 Doing stuff
@@ -40,23 +40,37 @@ Doing stuff
     # name of the primary service in the config 
     # there can only be one primary 
     edgex_store = edgex_cfg.get_primary_store()
-     
-    # Find the access to the store based on the config
-    edgex_store = edgex_access.edgex_store_access(edgex_cfg)
+    
+    # Let's define a callback when put is done
+    async def put_callback(obj, result):
+        print(obj.objname() + "\t" + str(result))
 
-    # list the buckets in the primary
-    # decide if you want to go down the hierarchy recursively
-    recursive = False
-    edgex_store.list_buckets(recursive)
-
-    # Let's write an object 
-    # get an object that references I/O functions first 
-    edgex_obj = edgex_access.edgex_obj_access(edgex_cfg)
+    # Let's a get a callback when we finish the reads first
+    async def get_callback(session, logger, obj, result):
+        dest_obj = obj.arg
+        dest_obj.databuf = result
+        op = edgex_access(dest_obj, logger)
+        put_obj = await op.put(session)
+        await put_callback(dest_obj, put_obj)
 
     # now do a PUT ising this
-    remoteName="mybucket/foofile"
+    remoteName="aws3://mybucket/foofile"
     localFile="foofile"
-    edgex_obj.put_obj(remoteName, fileName=localFile)
+    source_obj = edgex_object(remoteName, logger)
+    dest_obj = edgex_object(localFile, logger)
+
+    op = edgex_access(source_obj, logger)
+    databuf = await op.get(session)
+    await get_callback(session, logger, source_obj, databuf)
+
+    # Let's define a callback when exists is done
+    async def exists_callback(obj, result):
+        print(obj.objname() + "\t" + str(result))
+
+    # let's see if the object made it to the remote
+    dest_op = edgex_access(dest_obj, logger)
+    isthere = await dest_op.exists(session)
+    await exists_callback(dest_obj, isthere)
 
 API
 ====
@@ -66,10 +80,11 @@ Primary API in edgex_access module is in these objects:
 edgex_config
 edgex_store
 edgex_object
-edgex_task
+
 
 edgex_access
-        - Access S3 stores using the AWS S3 protocol 
+        - Access S3 stores using the AWS S3 protocol using primary 
+          API for list, exists, get, put, info, delete
 
 edgex_config
         - Describe the confguration for all the S3 stores and Local Store load_file
@@ -99,7 +114,7 @@ Example
    print("Object : " + obj.objname())
 
 
-edgex_operation
+edgex_access
         - Do the I/O operations using these methods, and the object supplied
         - Does the I/O based on the store type to determine how to do the I/O
 

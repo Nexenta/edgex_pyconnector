@@ -4,7 +4,7 @@
 
 Edge-X Python connector library for NexentaEdge and AWS using the S3 protocol 
 
-- S3 configuration  for more than one S3 store
+- S3 configuration for more than one S3 store
 - signature computation based on configuration
 - S3 URI access for GET,PUT, DELETE
 
@@ -17,10 +17,10 @@ other local data stores
 ```python
 
 from os.path import expanduser
-import edgex_access
+from edgex_access import edgex_config
 
 cfg_file = expanduser("~") + /.mys3config
-edgex_cfg = edgex_access.edgex_config()
+edgex_cfg = edgex_config()
 try:
 	edgex_cfg.load_file(cfg_file)
 except:
@@ -47,113 +47,128 @@ buckets = primary_store.list_buckets()
 ### edgex_object
 
 Each data object in any store is represented as an edgex_object. At the time of 
-the object creation , only the name is used. The edge_object uses the URI passed in 
+the object creation , only the name is used. The edgex_object uses the URI passed in 
 and checks against the stores to determine which store this object is part of.
 
-edgex_object parses the URI to determine which bucket this is a prt of
+edgex_object parses the URI to determine which store and bucket this is a part of
 
 
-### edgex_task
+### edgex_access
 
-edgex_task is a top level object which defines how a task is executed in a 
-threadpool. All main I/O Operations are available as different tasks 
-e.g. edgex_list, edgex_delete, edgex_get, edgex_put
+edgex_access is a top level object which defines how each I/O operation
+is executed. All main I/O Operations are available as different methods in 
+this class.
+e.g. list, delete, get, put
 
 In addition to I/O operations, some execution can also be done using the 
 threads in this pool 
 
-### edgex_process
-
-This is the main OS "process" object which decides how much memory, thread pools,
-execution paradigm etc. All edgex_tasks are scheduled into the edgex_process and this
-entity decides how to perform the execution . 
-
 Example:
 
-Here is a small example of how a object deletion is performed, and how the 
-delete operation is queued. 
-
+Object Deletion 
+---------------
 ```python
 
+# define a callback when the operation is done
+def my_cb(obj, result):
+    print(obj.pathname() + " " + str(result))
 
-def deleteobj_cb(future_obj):
-    obj = fututure_obj.arg
-    result = future_obj.result()
-    print("Object: " + obj.pathname() + " delete " + str(result))
-   
-def delete_obj(this_process, obj):
-    delete_task = edgex_access.edgex_delete(this_process, obj)
-    this_process.submit_task(delete_task, deleteobj_cb)
+# let's get a aio session 
+session = aiobotocore.get_session(loop=loop)
 
+# define the object
 del_objname = "aws_s3://mybucket/file_foo.txt"
-del_obj = edgex_access.edgex_object(edgex_cfg, del_objname)
-delete_obj(this_process, del_obj)
+del_obj = edgex_object(edgex_cfg, logger, del_objname)
 
+# access operation object
+op = edgex_access(del_obj, logger)
+
+# make it happen 
+deleted = await op.delete(session)
+
+# let's wait on the callback 
+await my_cb(edgex_obj, deleted)
 
 ```
 
-Here is a small example to whet your appetite
+Object Info
+-----------
 
 ```python
 
-# Check of the object exists in the store
-oname = "mybuk1/high_tech_stocks.txt"
-primary_store = edgex_cfg.get_primary_store()
-remote_edgex_obj = edgex_access.edgex_obj(primary_store, oname)
+# define a callback when the operation is done
+def my_cb(obj, result):
+    print(obj.pathname() + " " + str(result))
 
-#
-def existsobj_cb(future_obj):
-    result = future_obj.result()
-    obj = future_obj.arg
-    print(obj.pathname() + "\t:\t" + str(result))
-    return result
+# let's get a aio session 
+session = aiobotocore.get_session(loop=loop)
 
-def exists_obj(this_process, obj):
-    exists_task = edgex_access.edgex_exists(this_process, obj)
-    this_process.submit_task(exists_task, existsobj_cb)
-
-isthere = exists_obj(this_process, remote_edgex_obj)
-# is_there is True or False
-
-# Let's get the object
-source_obj = edgex_access.edgex_object(cfg, "aws3://mybuck1/stock_file.txt")
-dest_obj = edgex_access.edgex_object(cfg, "high_tech_stocks.txt", as_is=True)
-
-# this is the callback that is called when the get object is 
-# actually obtained
-def getobj_source_cb(future_obj):
-    result = future_obj.result()
-    source_obj = future_obj.arg
-    this_process = source_obj.ctx
-    dest_obj = source_obj.arg
-    dest_obj.databuf = result
-    put_task = edgex_access.edgex_put(this_process, dest_obj)
-    this_process.submit_task(put_task, getobj_target_cb)
-
-# when the buffer retrieved is now placed into a local file 
-# this callback is called. 
-def getobj_target_cb(future_obj):
-    result = future_obj.result()
-    target_obj = future_obj.arg
-
-# create a get task and hand it off to the process
-def get_obj(this_process, source_obj, dest_obj):
-    source_obj.arg = dest_obj
-    source_obj.ctx = this_process
-    get_task = edgex_access.edgex_get(this_process, source_obj)
-    this_process.submit_task(get_task, getobj_source_cb)
-
-
-# in the example above, we simply have to do this .
-get_obj(this_process, source_obj, dest_obj)
-
-# Let's remove the remote file
+# define the object
 del_objname = "aws_s3://mybucket/file_foo.txt"
-del_obj = edgex_access.edgex_object(edgex_cfg, del_objname)
-delete_obj(this_process, del_obj)
+del_obj = edgex_object(edgex_cfg, logger, del_objname)
 
+# access operation object
+op = edgex_access(del_obj, logger)
+
+# make it happen 
+info = await op.info(session)
+
+# let's wait on the callback 
+await my_cb(edgex_obj, info)
 
 ```
+
+As you can see the only difference between the above is 
+
+```python
+deleted = await op.delete(session)
+```
+
+```python
+info = await op.info(session)
+```
+
+primarily the operation used in edgex_access
+
+
+Now that we have done a single object operations like delete and info,
+let's try to retrieve the object using get or place the object using put . 
+
+Here is a "GET" example:
+
+```python
+
+# first we define the callback when 
+# we place the data buffer we got
+
+def put_callback(obj, result):
+    print(obj.pathname() + " " + str(result))
+
+# Now we define the callback to retrieve 
+# the buffer of the object we are trying to 
+# retrieve
+
+def get_callback(session, logger, obj, databuf):
+    target_object = obj.arg
+    target_object.databuf = databuf
+    op = edgex_access(target_obj, logger)
+    put_obj = await op.put(session)
+    await put_callback(dest_obj, put_obj)
+
+# start of the get operation 
+
+get_objname = "aws_s3://mybucket/file_foo.txt"
+get_obj = edgex_object(edgex_cfg, logger, del_objname)
+
+op = edgex_access(source_obj, s3elog)
+databuf = await op.get(session)
+await get_callback(session, logger, source_obj, databuf)
+
+```
+
+As you can see from the example above, the object data buffer 
+is retrieved and placed locally to the desired location using the 
+"get" method in edgex_access. 
 
 edgex_access is currently in development. Some of the features are missing and there are bugs 
 Please refer to the 'Development Status" below.

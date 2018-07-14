@@ -6,17 +6,26 @@
 import platform
 import getopt
 import sys
-import pprint
+import asyncio
+import async_timeout
+
+import aiohttp
+import aiofiles
+import aiobotocore 
+
+import random 
 import os
 from os.path import expanduser
-import re
-import simplejson as json
-import random 
 
-import edgex_access
+from edgex_access import edgex_config
+from edgex_access import edgex_object
+from edgex_access import edgex_access
+from edgex_access import edgex_logger 
 
+debug_level = 5
 DEFAULT_CONFIG = "/.s3edgex"
-S3EA_LOG="s3edgex.log"
+S3EA_LOG = "s3edgex.log"
+s3elog = None 
 
 
 sample_config = ' \
@@ -47,367 +56,46 @@ sample_config = ' \
 	"DEBUG" : 5 \
 } \
 '
-# =============================================================================
-def s3edgex_test(edgex_cfg, test_name=""):
-    if (test_name == "basic"):
-        print("Not Yet!!")
-    elif (test_name == "step"):
-        print("Not Yet!!")
+
+async def s3e_setup(cfg, args, s3elog):
+    if (len(args) == 0):
+        cfg.show_all()
+        return
+
+    subcmd = args[0]
+    if (subcmd == "create"):
+        pass
+    elif (subcmd == "edit"):
+        pass
+    elif (subcmd == "show"):
+        cfg.show_all()
     else:
-        print("Unknown test case: " + test_name)
+        s3elog.log_print("setup [ show | create | edit <name> <value> ]")
 
-def s3edgex_store(edgex_cfg, args):
-    if args is None:
-        stores = edgex_cfg.get_stores()
-        primary_store = edgex_cfg.get_primary_store()
-        for st in stores:
-            store = edgex_cfg.get_store(st)
-            if (st == primary_store.get_name()):
-                print(st + "\t" + store.get_type() + "\t" + "PRIMARY")
-            else:
-                print(st + "\t" + store.get_type())
+async def s3e_store(cfg, args, s3elog):
+
+    if (len(args) == 0):
+        cfg.show_stores()
+        return
+
+    subcmd = args[0]
+    if (subcmd == "add"):
+        if (len(args) < 2):
+            s3elog.log_print("add <store_name>")
+        pass
+    elif (subcmd == "del"):
+        if (len(args) < 2):
+            s3elog.log_print("add <store_name>")
+        pass
+    elif (subcmd == "edit"):
+        if (len(args) < 2):
+            s3elog.log_print("add <store_name>")
+        pass
     else:
-        subcmd = args[0]
-        if (subcmd == "list"):
-            stores = edgex_cfg.get_stores()
-            primary_store = edgex_cfg.get_primary_store()
-            for st in stores:
-                store = edgex_cfg.get_store(st)
-                if (st == primary_store.get_name()):
-                    print(st + "\t" + store.get_type() + "\t" + "PRIMARY")
-                else:
-                    print(st + "\t" + store.get_type())
-        elif (subcmd == "add"):
-            print("Not Yet!")
-        elif (subcmd == "del"):
-            print("Not Yet!")
-        elif (subcmd == "primary"):
-            stores = edgex_cfg.get_stores()
-            primary_store = edgex_cfg.get_primary_store()
-            print(primary_store.get_name())
-        else:
-            print("Unknown command: " + subcmd)
-
-def s3edgex_setup(args):
-    if args is None:
-        print("setup create | show ")
-    else:
-        subcmd = args[0]
-        cfg_file = expanduser("~") + DEFAULT_CONFIG 
-        if (subcmd == "create"):
-            if (os.path.exists(cfg_file)):
-                print(cfg_file + " already exists")
-                return
-            dot_config = json.loads(sample_config)
-            with open(cfg_file, 'a+') as f:
-                json.dump(dot_config, f)
-        elif (subcmd == "show"):
-            if (os.path.exists(cfg_file)):
-                with open(cfg_file, 'r') as f:
-                    dot_config = json.load(f)
-                pprint.pprint(json.dumps(dot_config, indent=4))
-        else:
-            print("Unknown command: " + subcmd)
-# ============================================================================
-def gend_usage():
-    print("gend [ -h ]")
-    print("gend [ -l ] <folder>")
-
-def gend_store(this_process, args):
-    if args is None:
-        gend_usage()
-        sys.exit(2)
-    if (args[0] == "-h"):
-        gend_usage()
-        sys.exit(2)
-    local_obj = False
-    if (args[0] == "-l"):
-        local_obj = True
-        if (len(args) > 1):
-            foldername = args[1]
-        else:
-            gend_usage()
-            sys.exit(2)
-    else:
-        if not args[0].startswith("-"):
-            foldername = args[0]
-
-    # make these configurable later not now
-    # for now always local 
-    maxcount = 50
-    modcount = 10
-    dpath = foldername + "/testdata"
-    ksize = [ 1024, 2048, 4096, 8192 ]
-
-    mdpath = dpath + "/d0"
-    if not os.path.exists(mdpath):
-        os.makedirs(mdpath)
-
-    for i in range(0,maxcount):
-        filename = mdpath +  "/" + "dd" + str(i)
-        sz = random.choice(ksize)
-        with open(filename, 'wb+') as fd:
-            fd.write(os.urandom(sz))
-        if ( (i % modcount) == 0) and (i != 0):
-            mdpath = dpath + "/" + "d" + str(i)
-            if not os.path.exists(mdpath):
-                os.makedirs(mdpath)
-# ============================================================================
-
-def end_cb(future_obj):
-    result = future_obj.result()
-    source_obj = future_obj.arg
-    count = source_obj.databuf
-    #print("END: done : " + source_obj.pathname() + " : " + str(count))
-
-def terminate(this_process, wait_time):
-    # terminate    
-    end_obj = edgex_access.edgex_object(this_process.cfg, "0xdeadbeef")
-    end_obj.databuf = wait_time
-    end_obj.ctx = this_process
-    terminate_task = edgex_access.edgex_terminate(this_process, end_obj)
-    this_process.submit_task(terminate_task, end_cb)
-# ==========================================================================
-
-def listobj_cb(future_obj):
-    result = future_obj.result()
-    print(str(result))
-
-def list_obj(this_process, obj):
-    list_task = edgex_access.edgex_list(this_process, obj)
-    this_process.submit_task(list_task, listobj_cb)
-
-def list_recursive_list(future_obj):
-    obj = future_obj.arg
-    this_process = obj.ctx
-    this_obj_list = future_obj.result()
-    done_cb = obj.arg 
-    for item in this_obj_list:
-        if (obj.islocal()):
-            #objname = obj.objname() + item
-            objname = "//" + str(obj.pathname()) + item
-        else:
-            objname = obj.basename() + item
-        child_obj = edgex_access.edgex_object(this_process.cfg, objname)
-        if (child_obj.isfolder):
-            list_recursive(this_process, child_obj, done_cb)
-    done_cb(this_obj_list)
-
-def list_recursive(this_process, obj, done_cb):
-    if not obj.isfolder:
-        return
-    obj.ctx = this_process
-    obj.arg = done_cb
-    list_task = edgex_access.edgex_list(this_process, obj)
-    this_process.submit_task(list_task, list_recursive_list)
-
-#
-def deleteobj_cb(future_obj):
-    result = future_obj.result()
-    pass
-   
-def delete_obj(this_process, obj):
-    delete_task = edgex_access.edgex_delete(this_process, obj)
-    this_process.submit_task(delete_task, deleteobj_cb)
+        s3elog.log_print("store [ add | del | edit ] <store_name> ")
 
 
-def delete_recursive_list(future_obj):
-    obj = future_obj.arg
-    this_process = obj.ctx
-    this_obj_list = future_obj.result()
-    for item in this_obj_list:
-        if (obj.islocal()):
-            #objname = obj.objname() + item
-            objname = "//" + str(obj.pathname()) + item
-        else:
-            objname = obj.basename() + item
-        child_obj = edgex_access.edgex_object(this_process.cfg, objname, store=obj.store)
-        if (child_obj.isfolder):
-            delete_recursive(this_process, child_obj)
-        else:
-            delete_obj(this_process, child_obj)
-
-def delete_recursive(this_process, obj):
-    if not obj.isfolder:
-        return
-    obj.ctx = this_process
-    list_task = edgex_access.edgex_list(this_process, obj)
-    this_process.submit_task(list_task, delete_recursive_list)
-
-
-
-#
-def existsobj_cb(future_obj):
-    result = future_obj.result()
-    obj = future_obj.arg
-    print(obj.pathname() + "\t:\t" + str(result))
-
-def exists_obj(this_process, obj):
-    exists_task = edgex_access.edgex_exists(this_process, obj)
-    this_process.submit_task(exists_task, existsobj_cb)
-
-def exists_recursive_list(future_obj):
-    obj = future_obj.arg
-    this_process = obj.ctx
-    this_obj_list = future_obj.result()
-    for item in this_obj_list:
-        if (obj.islocal()):
-            #objname = obj.objname() + item
-            objname = "//" + str(obj.pathname()) + item
-        else:
-            objname = obj.basename() + item
-        child_obj = edgex_access.edgex_object(this_process.cfg, objname, store=obj.store)
-        if (child_obj.isfolder):
-            exists_recursive(this_process, child_obj)
-        else:
-            exists_obj(this_process, child_obj)
-
-def exists_recursive(this_process, obj):
-    if not obj.isfolder:
-        return
-    obj.ctx = this_process
-    list_task = edgex_access.edgex_list(this_process, obj)
-    this_process.submit_task(list_task, exists_recursive_list)
-    
-#
-def info_obj_cb(future_obj):
-    result = future_obj.result()
-    obj = future_obj.arg
-    print(str(result))
-
-def info_obj(this_process, obj):
-    info_task = edgex_access.edgex_info(this_process, obj)
-    this_process.submit_task(info_task, info_obj_cb)
-
-
-def info_recursive_list(future_obj):
-    obj = future_obj.arg
-    this_process = obj.ctx
-    this_obj_list = future_obj.result()
-    for item in this_obj_list:
-        if (obj.islocal()):
-            objname = "//" + str(obj.pathname()) + item
-        else:
-            objname = obj.basename() + item
-        child_obj = edgex_access.edgex_object(this_process.cfg, objname, store=obj.store)
-        if (child_obj.isfolder):
-            info_recursive(this_process, child_obj)
-        else:
-            info_obj(this_process, child_obj)
-
-def info_recursive(this_process, obj):
-    if not obj.isfolder:
-        return
-    obj.ctx = this_process
-    list_task = edgex_access.edgex_list(this_process, obj)
-    this_process.submit_task(list_task, info_recursive_list)
-
-
-#
-def getobj_source_cb(future_obj):
-    result = future_obj.result()
-    source_obj = future_obj.arg
-    this_process = source_obj.ctx
-    dest_obj = source_obj.arg
-    dest_obj.databuf = result
-    put_task = edgex_access.edgex_put(this_process, dest_obj)
-    this_process.submit_task(put_task, getobj_target_cb)
-
-def getobj_target_cb(future_obj):
-    result = future_obj.result()
-    target_obj = future_obj.arg
-    # TODO
-    # verify what we have received and written
-    pass
-
-def get_obj(this_process, source_obj, dest_obj):
-    source_obj.arg = dest_obj
-    source_obj.ctx = this_process
-    print("source: " + source_obj.pathname() + "\tdestination: " + dest_obj.pathname())
-    get_task = edgex_access.edgex_get(this_process, source_obj)
-    this_process.submit_task(get_task, getobj_source_cb)
-
-def get_recursive_list(future_obj):
-    source_obj = future_obj.arg
-    this_process = source_obj.ctx
-    dest_obj = source_obj.arg
-    this_obj_list = future_obj.result()
-    for item in this_obj_list:
-        if (source_obj.islocal()):
-            source_objname = "//" + str(source_obj.pathname()) + item
-        else:
-            source_objname = source_obj.basename() + item
-        source_child_obj = edgex_access.edgex_object(this_process.cfg, source_objname, store=source_obj.get_store())
-        if (dest_obj.islocal()):
-            dest_objname = "//" + str(dest_obj.pathname()) + item
-        else:
-            dest_objname = dest_obj.basename() + item
-        dest_child_obj = edgex_access.edgex_object(this_process.cfg, dest_objname, store=dest_obj.get_store())
-        if (source_child_obj.isfolder):
-            get_recursive(this_process, source_child_obj, dest_child_obj)
-        else:
-            get_obj(this_process, source_child_obj, dest_child_obj)
-
-
-def get_recursive(this_process, source_obj, dest_obj):
-    #if (not source_obj.isfolder) or (not dest_obj.isfolder):
-    #    return
-    source_obj.arg = dest_obj
-    source_obj.ctx = this_process
-    list_task = edgex_access.edgex_list(this_process, source_obj)
-    this_process.submit_task(list_task, get_recursive_list)
-
-#
-def putobj_source_cb(future_obj):
-    result = future_obj.result()
-    source_obj = future_obj.arg
-    this_process = source_obj.ctx
-    dest_obj = source_obj.arg
-    dest_obj.databuf = result
-    put_task = edgex_access.edgex_put(this_process, dest_obj)
-    this_process.submit_task(put_task, putobj_target_cb)
-
-def putobj_target_cb(future_obj):
-    result = future_obj.result()
-    target_obj = future_obj.arg
-    # TODO
-    # verify what we have received and written
-    pass
-
-def put_obj(this_process, source_obj, dest_obj):
-    source_obj.arg = dest_obj
-    source_obj.ctx = this_process
-    get_task = edgex_access.edgex_get(this_process, source_obj)
-    this_process.submit_task(get_task, putobj_source_cb)
-
-
-def put_recursive_list(future_obj):
-    source_obj = future_obj.arg
-    this_process = source_obj.ctx
-    dest_obj = source_obj.arg
-    this_obj_list = future_obj.result()
-    for item in this_obj_list:
-        source_objname = source_obj.objname() + item
-        source_child_obj = edgex_access.edgex_object(this_process.cfg, source_objname, as_is=True)
-        dest_objname = dest_obj.basename() + dest_obj.objname() + item
-        dest_child_obj = edgex_access.edgex_object(this_process.cfg, dest_objname, store=dest_obj.get_store())
-        if (source_child_obj.isfolder):
-            put_recursive(this_process, source_child_obj, dest_child_obj)
-        else:
-            put_obj(this_process, source_child_obj, dest_child_obj)
-
-def put_recursive(this_process, source_obj, dest_obj):
-    if (not source_obj.isfolder) or (not dest_obj.isfolder):
-        return
-    source_obj.arg = dest_obj
-    source_obj.ctx = this_process
-    list_task = edgex_access.edgex_list(this_process, source_obj)
-    this_process.submit_task(list_task, put_recursive_list)
-
-# ============================================================================
-
-# for commands that operate on a single object at command line
-def cmd_parse(cfg, elog, args):
+async def parse_cmd_1(cfg, args, s3elog):
 
     recursive = False
     local_obj = False
@@ -439,14 +127,21 @@ def cmd_parse(cfg, elog, args):
             store = cfg.get_local_pwd()
         else:
             store = None
-        edgex_obj = edgex_access.edgex_object(cfg, objname, store=store, as_is=local_obj)
+        edgex_obj = edgex_object(cfg, s3elog, objname, store=store, as_is=local_obj)
+
+        s3elog.log_debug(edgex_obj.pathname() + "\t" + "-r: " + str(recursive))
+        s3elog.log_debug(edgex_obj.bucketname() + "\t" + edgex_obj.objname() + "\t" + edgex_obj.store_type() + "\t" + str(edgex_obj.islocal()))
+
         return recursive, edgex_obj
     except Exception as e:
-        elog.log_error(str(e))
-        raise e
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        s3elog.log_error(str(e))
+        s3elog.log_error("Unexpected Error: " + str(exc_type) + " " + str(fname) + " " + str(exc_tb.tb_lineno))
+        sys.exit(-2)
 
-# for commands like get, put which have source and target
-def cmd_parse_2(cfg, elog, args):
+
+async def parse_cmd_2(cfg, args, s3elog):
     recursive = False
     local_obj = False
     if (args[0] == "-r"):
@@ -475,161 +170,326 @@ def cmd_parse_2(cfg, elog, args):
             first_objname = args[0]
             second_objname = args[1]
     try:
-        first_obj = edgex_access.edgex_object(cfg, first_objname)
+        first_obj = edgex_object(cfg, s3elog, first_objname)
         if local_obj:
             store = cfg.get_local_pwd()
         else:
             store = None
-        second_obj = edgex_access.edgex_object(cfg, second_objname, store=store, as_is=local_obj)
+        second_obj = edgex_object(cfg, s3elog, second_objname, store=store, as_is=local_obj)
         return recursive, [first_obj, second_obj]
     except Exception as e:
-        elog.log_error(str(e))
-        raise e
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        s3elog.log_error(str(e))
+        s3elog.log_error("Unexpected Error: " + str(exc_type) + " " + str(fname) + " " + str(exc_tb.tb_lineno))
+        sys.exit(-2)
 
-def list_recursive_done(obj_list):
-    print(str(obj_list))
 
-def cmd_list(this_process, elog, args=None):
-    cfg = this_process.cfg
-    if args is None:
-        edgex_store = cfg.get_primary_store()
-        name, items = edgex_store.list_buckets()
-        print(name)
-        for it in items:
-            print("\t" + it)
-        return
-    recursive, edgex_obj = cmd_parse(cfg, elog, args)
-    if recursive and edgex_obj.isfolder:
-        list_recursive(this_process, edgex_obj, list_recursive_done)
-    else:
-        list_obj(this_process, edgex_obj)
-
-def cmd_exists(this_process, elog, args=None):
-    cfg = this_process.cfg
-    if args is None:
-        print("exists [ -r | -l ] <object_name>")
-        return
-    recursive, edgex_obj = cmd_parse(cfg, elog, args)
-    if recursive and edgex_obj.isfolder:
-        exists_recursive(this_process, edgex_obj)
-    else:
-        exists_obj(this_process, edgex_obj)
-
-def cmd_info(this_process, elog, args=None):
-    cfg = this_process.cfg
-    if args is None:
-        print("info [ -r | -l ] <object_name>")
-        return
-    recursive, edgex_obj = cmd_parse(cfg, elog, args)
-    if recursive and edgex_obj.isfolder:
-        info_recursive(this_process, edgex_obj)
-    else:
-        info_obj(this_process, edgex_obj)
-
-def cmd_delete(this_process, elog, args=None):
-    cfg = this_process.cfg
-    if args is None:
-        print("del [ -r | -l ] <object_name>")
-        return
-    recursive, edgex_obj = cmd_parse(cfg, elog, args)
-    if recursive and edgex_obj.isfolder:
-        delete_recursive(this_process, edgex_obj)
-    else:
-        delete_obj(this_process, edgex_obj)
-    pass
-
-def cmd_get(this_process, elog, args=None):
-    cfg = this_process.cfg
-    if args is None:
-        print("get [ -r | -l ] <source_object> <target_object>")
-        return
-    recursive, objs = cmd_parse_2(cfg, elog, args)
-    source_obj = objs[0]
-    dest_obj = objs[1]
-    if recursive:
-        get_recursive(this_process, source_obj, dest_obj)
-    else:
-        get_obj(this_process, source_obj, dest_obj)
-
-def cmd_put(this_process, elog, args=None):
-    cfg = this_process.cfg
-    if args is None:
-        print("put [ -r | -l ] <source_object> <target_object>")
-        return
-    recursive, objs = cmd_parse_2(cfg, elog, args)
-    dest_obj = objs[0]
-    source_obj = objs[1]
-    if recursive and source_obj.isfolder and dest_obj.isfolder:
-        put_recursive(this_process, source_obj, dest_obj)
-    else:
-        put_obj(this_process, source_obj, dest_obj)
-
-def cmd_test(this_process, elog, args=None):
-    cfg = this_process.cfg
-    if args is None:
-        pass
-    if args is None:
-        s3edgex_test(cfg)
-    else:
-        s3edgex_test(cfg, test_name="basic")
-
-def process_command(command, elog, args=None):
-    """ Process the command supplied in the command line """
-
-    cfg_file = expanduser("~") + DEFAULT_CONFIG 
-    if (command == "setup"):
-        s3edgex_setup(args)
-        return
-
-    this_process = edgex_access.edgex_access()
-    edgex_cfg = edgex_access.edgex_config()
+async def gp_cmd_callback(session, s3elog, cmd, obj, result):
     try:
-        edgex_cfg.load_file(cfg_file)
-    except:
-        elog.log_error(" Error loading " + cfg_file  + " config file")
-        return
+        s3elog.log_print(cmd + "\t" + obj.objname())
+        s3elog.log_print("\t" + str(len(result)))
+        dest_obj = obj.arg
+        dest_obj.databuf = result
+        op = edgex_access(dest_obj, s3elog)
+        put_obj = await op.put(session)
+        await cmd_callback('put', s3elog, dest_obj, put_obj)
+    except Exception as e:
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        s3elog.log_error(str(e))
+        s3elog.log_error("Unexpected Error: " + str(exc_type) + " " + str(fname) + " : " + str(exc_tb.tb_lineno))
 
-    this_process.add_config(edgex_cfg)
 
+
+async def cmd_callback(cmd, s3elog, obj, result):
+    if (cmd == 'list'):
+        s3elog.log_print(cmd + "\t" + obj.objname())
+        s3elog.log_print("\t" + str(result))
+
+async def cmd_recursive(cmd, s3elog, source_obj, session):
     try:
+        tgt_obj = source_obj.arg
+        if (tgt_obj != None):
+            s3elog.log_print(">" + cmd + "\t" + source_obj.pathname() + "\t" + tgt_obj.store_type() + "\t" + tgt_obj.pathname())
 
-        if (command == "store"):
-            s3edgex_store(this_process.cfg, args)
-            return
+        tgt_childobj = None
 
-        if (command == "list"):
-            cmd_list(this_process, elog, args)
-        elif (command == "exists"):
-            cmd_exists(this_process, elog, args)
-        elif (command == "info"):
-            cmd_info(this_process, elog, args)
-        elif (command == "del"):
-            cmd_delete(this_process, elog, args)
-        elif (command == "get"):
-            cmd_get(this_process, elog, args)
-        elif (command == "put"):
-            cmd_put(this_process, elog, args)
-        elif (command == "test"):
-            cmd_test(this_process, elog, args)
-        elif (command == "gend"):
-            gend_store(this_process, args)
+        if source_obj.isfolder:
+            op = edgex_access(source_obj, s3elog)
+            res = await op.list(session)
+            await cmd_callback('list', s3elog, source_obj, res)
+            for item in res:
+                source_childobj = source_obj.addchild(item)
+                if (tgt_obj != None):
+                    tgt_childobj = tgt_obj.addchild(item)
+                    source_childobj.arg = tgt_childobj
+                if source_childobj.isfolder:
+                    await cmd_recursive(cmd, s3elog, source_childobj, session)
+                else:
+                    if (tgt_childobj != None):
+                        source_obj.arg = tgt_childobj
+                    op = edgex_access(source_childobj, s3elog)
+                    if (cmd == 'list'):
+                        res = await op.list(session)
+                        await cmd_callback(cmd, s3elog, source_childobj, res)
+                    elif (cmd == 'exists'):
+                        res = await op.exists(session)
+                        await cmd_callback(cmd, s3elog, source_childobj, res)
+                    elif (cmd == 'info'):
+                        res = await op.info(session)
+                        await cmd_callback(cmd, s3elog, source_childobj, res)
+                    elif (cmd == 'del'):
+                        res = await op.delete(session)
+                        await cmd_callback(cmd, s3elog, source_childobj, res)
+                    elif (cmd == 'get'):
+                        databuf = await op.get(session)
+                        await gp_cmd_callback(session, s3elog, 'get', source_childobj, databuf)
+                    elif (cmd == 'put'):
+                        databuf = await op.get(session)
+                        await gp_cmd_callback(session, s3elog, 'put', source_childobj, databuf)
         else:
-            elog.log_error("Unknown command: " + command)
+            s3elog.log_print(">> " + source_obj.pathname())
+    except Exception as e:
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        s3elog.log_error(str(e))
+        s3elog.log_error("Unexpected Error: " + str(exc_type) + str(fname) + " : " + str(exc_tb.tb_lineno))
 
-        terminate(this_process, 4)
-        this_process.loop()
+
+async def parse_cmd_gend(cfg, args, s3elog):
+    local_obj = False
+    if (args[0] == "-l"):
+        local_obj = True
+    if (len(args) > 1):
+        start_obj_name = args[1]
+    try:
+        if local_obj:
+            store = cfg.get_local_pwd()
+        else:
+            store = None
+        if (not start_obj_name.endswith("/")):
+            start_obj_name += "/"
+        start_obj = edgex_object(cfg, s3elog, start_obj_name, store=store, as_is=local_obj)
+        return start_obj
+    except Exception as e:
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        s3elog.log_error(str(e))
+        s3elog.log_error("Unexpected Error: " + str(exc_type) + " " + str(fname) + " " + str(exc_tb.tb_lineno))
+        sys.exit(-2)
+
+async def s3e_gend(cfg, args, session, s3elog):
+    if (args is None) or (len(args) == 0):
+        return
+    try:
+        start_gend_obj = await parse_cmd_gend(cfg, args, s3elog)
+
+        # for now only local 
+        # TODO: make this for all 
+        if (start_gend_obj.store_type() != "FS"):
+            raise
+
+        # make these configurable later not now
+        # for now always local 
+        maxcount = 50
+        modcount = 10
+        dpath = start_gend_obj.pathname() + "/testdata"
+        ksize = [ 1024, 2048, 4096, 8192 ]
+
+        mdpath = dpath + "/d0"
+        if not os.path.exists(mdpath):
+            os.makedirs(mdpath)
+        for i in range(0,maxcount):
+            filename = mdpath +  "/" + "dd" + str(i)
+            sz = random.choice(ksize)
+            async with aiofiles.open(filename, mode='wb+') as fd:
+                await fd.write(os.urandom(sz))
+            fd.close()
+            if ( (i % modcount) == 0) and (i != 0):
+                mdpath = dpath + "/" + "d" + str(i)
+                if not os.path.exists(mdpath):
+                    os.makedirs(mdpath)
 
     except Exception as e:
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-        print("Unexpected Error: ", exc_type, fname, exc_tb.tb_lineno)
+        s3elog.log_error(str(e))
+        s3elog.log_error("Unexpected Error: " + str(exc_type) + " " + str(fname) + " " + str(exc_tb.tb_lineno))
 
-def system_info(debug_level):
-    """ Find the system informations details like, python, memory, release versions etc """
-    print("python \t\t: " + platform.python_version() + " " + platform.python_implementation() + " " + str(platform.python_build()))
-    print("platform \t: " + platform.node() + " " + platform.system() + " " + platform.machine() + " " + platform.release())
-    print("uname \t\t: " + platform.uname().version)
-    print("debug_level \t: " + str(debug_level))
+
+async def old_s3e_gend(cfg, args, session, s3elog):
+
+    if (args is None) or (len(args) == 0):
+        return
+   
+    foldername = args[0]
+
+    # make these configurable later not now
+    # for now always local 
+    maxcount = 50
+    modcount = 10
+    dpath = foldername + "/testdata"
+    ksize = [ 1024, 2048, 4096, 8192 ]
+
+    mdpath = dpath + "/d0"
+    if not os.path.exists(mdpath):
+        os.makedirs(mdpath)
+
+    for i in range(0,maxcount):
+        filename = mdpath +  "/" + "dd" + str(i)
+        sz = random.choice(ksize)
+        async with aiofiles.open(filename, mode='wb+') as fd:
+            await fd.write(os.urandom(sz))
+        fd.close()
+        if ( (i % modcount) == 0) and (i != 0):
+            mdpath = dpath + "/" + "d" + str(i)
+            if not os.path.exists(mdpath):
+                os.makedirs(mdpath)
+    s3elog.log_print("gend done")
+
+async def s3e_list(cfg, args, session, s3elog):
+    if (args is None) or (len(args) == 0):
+        return
+    try:
+        recursive, edgex_obj = await parse_cmd_1(cfg, args, s3elog)
+        if (recursive):
+            await cmd_recursive('list', s3elog, edgex_obj, session)
+        else:
+            op = edgex_access(edgex_obj, s3elog)
+            ls = await op.list(session)
+            await cmd_callback('list', s3elog, edgex_obj, ls)
+    except Exception as e:
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        s3elog.log_error(str(e))
+        s3elog.log_error("Unexpected Error: " + str(exc_type) + " " + str(fname) + " : " + str(exc_tb.tb_lineno))
+
+async def s3e_exists(cfg, args, session, s3elog):
+    if (args is None) or (len(args) == 0):
+        return
+    try:
+        recursive, edgex_obj = await parse_cmd_1(cfg, args, s3elog)
+        if (recursive):
+            await cmd_recursive('exists', s3elog, edgex_obj, session)
+        else:
+            op = edgex_access(edgex_obj, s3elog)
+            isthere = await op.exists(session)
+            await cmd_callback('exists', s3elog, edgex_obj, isthere)
+    except Exception as e:
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        s3elog.log_error(str(e))
+        s3elog.log_error("Unexpected Error: " + str(exc_type) + " " + str(fname) + " " + str(exc_tb.tb_lineno))
+
+async def s3e_delete(cfg, args, session, s3elog):
+    if (args is None) or (len(args) == 0):
+        return
+    try:
+        recursive, edgex_obj = await parse_cmd_1(cfg, args, s3elog)
+        if (recursive):
+            await cmd_recursive('del', s3elog, edgex_obj, session)
+        else:
+            op = edgex_access(edgex_obj, s3elog)
+            deleted = await op.delete(session)
+            await cmd_callback('delete', s3elog, edgex_obj, deleted)
+    except Exception as e:
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        s3elog.log_error(str(e))
+        s3elog.log_error("Unexpected Error: " + str(exc_type) + " " + str(fname) + " " + str(exc_tb.tb_lineno))
+
+async def s3e_info(cfg, args, session, s3elog):
+    if (args is None) or (len(args) == 0):
+        return
+    try:
+        recursive, edgex_obj = await parse_cmd_1(cfg, args, s3elog)
+        if (recursive):
+            await cmd_recursive('info', s3elog, edgex_obj, session)
+        else:
+            op = edgex_access(edgex_obj, s3elog)
+            obj_info = await op.info(session)
+            await cmd_callback('info', s3elog, edgex_obj, obj_info)
+    except Exception as e:
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        s3elog.log_error(str(e))
+        s3elog.log_error("Unexpected Error: " + str(exc_type) + " " + str(fname) + " " + str(exc_tb.tb_lineno))
+
+async def s3e_get(cfg, args, session, s3elog):
+    if (args is None) or (len(args) == 0):
+        return
+    try:
+        recursive, objs = await parse_cmd_2(cfg, args, s3elog)
+        source_obj = objs[0]
+        dest_obj = objs[1]
+        source_obj.arg = dest_obj
+        if (recursive):
+            await cmd_recursive('get', s3elog, source_obj, session)
+        else:
+            op = edgex_access(source_obj, s3elog)
+            databuf = await op.get(session)
+            await gp_cmd_callback(session, s3elog, 'get', source_obj, databuf)
+    except Exception as e:
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        s3elog.log_error(str(e))
+        s3elog.log_error("Unexpected Error: " + str(exc_type) + " " + str(fname) + " " + str(exc_tb.tb_lineno))
+
+async def s3e_put(cfg, args, session, s3elog):
+    if (args is None) or (len(args) == 0):
+        return
+    try:
+        recursive, objs = await parse_cmd_2(cfg, args, s3elog)
+        source_obj = objs[1]
+        dest_obj = objs[0]
+        source_obj.arg = dest_obj
+        if (recursive):
+            await cmd_recursive('put', s3elog, source_obj, session)
+        else:
+            op = edgex_access(source_obj, s3elog)
+            databuf = await op.get(session)
+            await gp_cmd_callback(session, s3elog, 'put', source_obj, databuf)
+    except Exception as e:
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        s3elog.log_error(str(e))
+        s3elog.log_error("Unexpected Error: " + str(exc_type) + " " + str(fname) + " " + str(exc_tb.tb_lineno))
+    
+
+async def process_command(cmd, args, cfg_file , session, s3elog):
+
+    valid_cmds = [ "exists", "put", "get", "del", "info", "list", "execute", "wget" , "gend", "setup", "store" ]
+    if (cmd not in valid_cmds):
+        s3elog.log_print("Unknown command: " + cmd)
+        return
+
+    # let's read the the config file first 
+    if (cfg_file != None):
+        async with aiofiles.open(cfg_file, mode='r') as f:
+            cfg_contents = await f.read()
+            cfg = edgex_config(cfg_contents, s3elog)
+
+    if (cmd == "setup"):
+        await s3e_setup(cfg, args, s3elog)
+    elif (cmd == "store"):
+        await s3e_store(cfg, args, s3elog)
+    elif (cmd == "list"):
+        await s3e_list(cfg, args, session, s3elog)
+    elif (cmd == "get"):
+        await s3e_get(cfg, args, session, s3elog)
+    elif (cmd == "put"):
+        await s3e_put(cfg, args, session, s3elog)
+    elif (cmd == "del"):
+        await s3e_delete(cfg, args, session, s3elog)
+    elif (cmd == "exists"):
+        await s3e_exists(cfg, args, session, s3elog)
+    elif (cmd == "info"):
+        await s3e_info(cfg, args, session, s3elog)
+    elif (cmd == "gend"):
+        await s3e_gend(cfg, args, session, s3elog)
+    else:
+        s3elog.log_error("Unknown command")
 
 def usage():
     """ Describe the usage of s3edgex """
@@ -645,7 +505,7 @@ def usage():
     print("\t\tget")
     print("\t\tdel")
     print("\t\tinfo")
-    print("\t\ttest")
+#    print("\t\ttest")
     print("Examples:")
     print("\t% " + sys.argv[0] + " [ --debug <level> ] setup [ create show ]")
     print("\t% " + sys.argv[0] + " [ --debug <level> ] store [ list add del ]")
@@ -660,11 +520,20 @@ def usage():
     print("\t% " + sys.argv[0] + " info <store://bucketname/filename>")
     print("\t% " + sys.argv[0] + " exists <store://bucketname/filename>")
 
+
+def system_info(debug_level):
+    """ Find the system informations details like, python, memory, release versions etc """
+    print("python \t\t: " + platform.python_version() + " " + platform.python_implementation() + " " + str(platform.python_build()))
+    print("platform \t: " + platform.node() + " " + platform.system() + " " + platform.machine() + " " + platform.release())
+    print("uname \t\t: " + platform.uname().version)
+    print("debug_level \t: " + str(debug_level))
+
+
 def main():
-    """ Main entry for the s3edgex command line """
-    if sys.version_info[0] < 3:
-        raise "Must be using Python 3 "
-    debug_level = 4
+    assert sys.version_info >= (3,5)
+
+    debug_level = 5
+
     try:
         opts, remainder = getopt.getopt(sys.argv[1:], "hd:s", ["help", "debug", "system"])
     except getopt.GetoptError:
@@ -679,20 +548,37 @@ def main():
         if o in ("-s", "--system"):
             system_info(debug_level)
             sys.exit(0)
+
     if (len(remainder) < 1):
         usage()
         sys.exit(2)
+
+    s3elog = edgex_logger(debug_level, S3EA_LOG) 
+    s3elog.log_info(sys.argv[0] + " started")
  
-    elog = edgex_access.edgex_logger(debug_level, S3EA_LOG) 
-    elog.log_info(sys.argv[0] + " started")
+    cfg_file = expanduser("~") + DEFAULT_CONFIG 
+    if not os.path.isfile(cfg_file) or not os.access(cfg_file, os.R_OK):
+        s3elog.log_error("Unable to access " + cfg_file)
+        sys.exit(2)
 
-    command = remainder[0]
-    if len(remainder[1:]) >= 1:
-        process_command(command, elog, remainder[1:])
-    else:
-        process_command(command, elog)
 
-    elog.log_info(sys.argv[0] + " ended")
+
+    # async code only here onwards
+    # ******************************************************************
+
+    loop = asyncio.get_event_loop()
+    # session = aiohttp.ClientSession(loop=loop)
+    session = aiobotocore.get_session(loop=loop)
+
+    cmd = remainder[0]
+    tasks = [asyncio.ensure_future(process_command(cmd, remainder[1:], cfg_file, session, s3elog))]
+
+    loop.run_until_complete(asyncio.gather(*tasks))
+    #loop.run_forever()
+
+    loop.close()
+    s3elog.log_info(sys.argv[0] + " ended")
 
 if __name__ == '__main__':
     main()
+

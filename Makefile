@@ -8,14 +8,14 @@ SETUP = setup.py
 DOCS = docs/source/$(MODULE).rst docs/source/s3edgex.rst
 SCRIPTS = s3edgex/s3edgex
 READMES = README.md LICENSE
-TESTS = test/test_ea.py
+TESTLOG = testlog.log
 REQ = requirements.txt
 DISTDIR = dist 
 
 DIST_FILE = $(DISTDIR)/$(MODULE)-$(VERSION).tar.gz
 ALL_FILES = $(SOURCES) $(SETUP) $(READMES) $(TESTS) $(DOCS) $(SCRIPTS) $(REQ)
 
-all: build test install
+all: build install test
 
 show:
 	@for f in $(ALL_FILES) ; do \
@@ -27,7 +27,7 @@ clean:
 	rm -rf dist build
 	rm -rf __pycache__
 	make -C docs clean
-
+	rm test.log
 
 req:
 	pip freeze > $(REQ)
@@ -55,3 +55,11 @@ register: $(SETUP)
 
 docs: $(DOCS)
 	make -C docs html
+
+testlog:
+	@if [ -f test.log ]; then \
+		rm test.log; \
+	fi
+	make -C test 2>&1 | tee test.log
+
+test: testlog
