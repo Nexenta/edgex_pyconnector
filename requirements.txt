@@ -74,7 +74,7 @@ pytest-forked==0.2
 pytest-xdist==1.22.2
 python-dateutil==2.7.3
 pytz==2018.4
-PyYAML==3.12
+PyYAML==5.4
 requests==2.18.4
 requests-aws4auth==0.9
 requests-oauthlib==0.8.0
