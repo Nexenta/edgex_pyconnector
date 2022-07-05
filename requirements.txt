@@ -94,7 +94,7 @@ tqdm==4.23.0
 twine==1.11.0
 typing==3.6.4
 typing-extensions==3.6.5
-ujson==1.35
+ujson==5.4.0
 urllib3==1.22
 uvloop==0.9.1
 virtualenv==15.2.0
